@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyspark.sql import DataFrame
-from pyspark.sql import functions as f
 
 from tables.bronze.smith.users.config import SmithUserBronze
 from utils.dataframes import create_dataframe

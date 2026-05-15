@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     """
 
     mongo_uri: str = "mongodb://localhost:27017"
+    contracts_mongo_uri: str | None = None
     contracts_db: str = "poorbricks_contracts"
     contracts_collection: str = "data_contracts"
     delta_output_dir: str = "artifacts/delta"
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     postgres_user: str = "analytics"
     postgres_password: str = "analytics"
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()

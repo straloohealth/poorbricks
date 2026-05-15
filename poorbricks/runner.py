@@ -126,18 +126,6 @@ def _build_fixtures_inputs(
 # ---------------------------------------------------------------------------
 
 
-def _df_from_contract(source: ContractSource, spark: SparkSession) -> DataFrame:
-    """Fetch example rows from MongoDB contracts collection."""
-    from pyspark.sql.types import StructType
-
-    from utils.contracts import fetch_contract
-
-    contract = fetch_contract(source.table_name)
-    schema = StructType.fromJson(contract["schema_json"])
-    example_rows = contract["example_rows"]
-    return spark.createDataFrame(example_rows, schema)
-
-
 def _resolve_production_input(
     spark: SparkSession,
     spec: TableSource | MongoSource | ContractSource | PostgresTableSource,

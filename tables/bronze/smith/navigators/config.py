@@ -11,7 +11,6 @@ from pydantic import Field
 
 from validation import (
     Expectations,
-    NotNullRule,
     StringLengthRule,
     ValidatedStruct,
     ValidationRule,

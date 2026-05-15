@@ -28,7 +28,11 @@ poetry run mypy
 poetry run ruff check .
 poetry run ruff format .
 
-# Pre-commit (run before every commit)
+# Pre-commit hooks (run automatically on git commit)
+# First-time setup:
+poetry run pre-commit install
+
+# Manual run (before committing):
 poetry run pre-commit run --all-files
 
 # Start local services (MongoDB, PostgreSQL)
@@ -45,6 +49,12 @@ poetry run python -c "from framework import discover_all_pipelines, list_pipelin
 
 # Validate pipeline directory structure
 poetry run python scripts/check_pipeline_structure.py
+
+# Push every pipeline's full contract (fields, expectations, inputs, fixtures, profile)
+poetry run python scripts/push_contract.py --all
+
+# Browse contracts + run tests in the Streamlit UI
+poetry run streamlit run streamlit_app/app.py
 ```
 
 ## Architecture
