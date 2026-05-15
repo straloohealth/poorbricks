@@ -70,7 +70,8 @@ def _run_pipeline(
     table_name = contract["table_name"]
     storage = contract.get("storage", "delta")
 
-    get_spark()  # ensure the SparkSession is alive
+    spark = get_spark()  # ensure the SparkSession is alive
+    spark.sparkContext.setLocalProperty("spark.sql.session.timeZone", "UTC")
     _ensure_discovery()
 
     from poorbricks.registry import get_pipeline

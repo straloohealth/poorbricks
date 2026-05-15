@@ -124,7 +124,9 @@ def create_dataframe(
     """
     spark = SparkSession.getActiveSession()
     if spark is None:
-        raise ValueError("No active SparkSession found")
+        from utils.spark_local import build_local_spark
+
+        spark = build_local_spark("poorbricks-dataframes")
 
     if isinstance(data, _DATAFRAME_TYPES):
         if target_schema is None:
