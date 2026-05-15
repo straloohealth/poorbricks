@@ -1,0 +1,4 @@
+# Legacy pipelines — exempt from the framework-migration arch tests.
+# When you migrate a pipeline, remove its line below. CI fails if a
+# non-allowlisted pipeline lacks the required framework structure or docs.
+# See source/pipelines/README.md for the migration playbook.

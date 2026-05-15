@@ -1,0 +1,41 @@
+version: 2.1
+setup: true
+
+orbs:
+  continuation: circleci/continuation@0.3.1
+
+# This is a setup config — it does nothing except generate the real
+# workload from .circleci/generate-config.py and feed it to the
+# continuation orb. All jobs (lint, per-domain tests, integration,
+# production-checks, sync, deploy) live in the dynamic config.
+#
+# Why a generator: the team wants per-domain parallel test jobs so a
+# slow domain can't gate the rest of the suite. CircleCI's matrix
+# syntax can't introspect folders on disk; a Python emitter can.
+
+jobs:
+  setup:
+    docker:
+      - image: docker.io/danielspeixoto/databricks
+    steps:
+      - checkout
+      - run:
+          name: Install jq (continuation/continue requires it) + pyyaml (generator)
+          command: |
+            if ! command -v jq >/dev/null 2>&1; then
+              apt-get update -qq && apt-get install -y -qq jq
+            fi
+            pip install --quiet pyyaml
+      - run:
+          name: Generate dynamic config from tables/* domains
+          command: |
+            python .circleci/generate-config.py > /tmp/dynamic_config.yml
+            echo "--- generated config (head) ---"
+            head -80 /tmp/dynamic_config.yml
+      - continuation/continue:
+          configuration_path: /tmp/dynamic_config.yml
+
+workflows:
+  setup:
+    jobs:
+      - setup
