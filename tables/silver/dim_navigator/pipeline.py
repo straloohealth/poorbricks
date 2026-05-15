@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pyspark.sql import DataFrame
 
-from framework import ContractSource, Inputs, pipeline
+from poorbricks import ContractSource, Inputs, pipeline
 from tables.silver.dim_navigator.config import (
     DIM_NAVIGATOR_TABLE_NAME,
     DimNavigator,

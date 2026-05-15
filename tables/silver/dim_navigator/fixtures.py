@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pyspark.sql import SparkSession
 
-from framework import scenario
+from poorbricks import scenario
 from tables.bronze.smith.navigators.config import SmithNavigatorBronze
 from tables.silver.dim_navigator.pipeline import DimNavigatorInputs
 from utils.dataframes import create_dataframe

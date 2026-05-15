@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import argparse
 
-from framework.discovery import discover_all_pipelines
-from framework.registry import all_pipelines
-from framework.runner import run
+from poorbricks.discovery import discover_all_pipelines
+from poorbricks.registry import all_pipelines
+from poorbricks.runner import run
 from utils.contracts import profile_dataframe, push_contract
 
 

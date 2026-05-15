@@ -14,7 +14,7 @@ from datetime import datetime
 
 from pyspark.sql import SparkSession
 
-from framework import scenario
+from poorbricks import scenario
 from tables.bronze.smith.users.config import SmithUserBronze
 from tables.silver.dim_patient.pipeline import DimPatientInputs
 from utils.dataframes import create_dataframe

@@ -283,14 +283,14 @@ class TestFrameworkMigration:
     """
 
     def test_migrated_pipelines_use_framework_decorator(self) -> None:
-        """Non-allowlisted pipeline.py must import from framework."""
+        """Non-allowlisted pipeline.py must import from poorbricks."""
         violations: list[str] = []
         for pipeline_dir in _enforced_pipeline_dirs():
             text = (pipeline_dir / "pipeline.py").read_text(encoding="utf-8")
-            if "from framework" not in text:
+            if "from poorbricks" not in text:
                 rel = pipeline_dir.relative_to(_REPO_ROOT).as_posix()
                 violations.append(
-                    f"{rel}/pipeline.py: missing `from framework ...` "
+                    f"{rel}/pipeline.py: missing `from poorbricks ...` "
                     f"import. Either migrate to the framework or add this "
                     f"path to validation/_framework_allowlist.txt."
                 )

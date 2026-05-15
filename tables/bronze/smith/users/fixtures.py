@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from framework import scenario
+from poorbricks import scenario
 from tables.bronze.smith.users.pipeline import SmithUsersInputs
 
 _NOW = datetime(2026, 5, 7, 12, 0, 0)

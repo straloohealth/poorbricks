@@ -49,7 +49,7 @@ def discover_framework_pipelines() -> list[str]:
     for path in sorted(_PIPELINES_ROOT.rglob("pipeline.py")):
         if "__pycache__" in path.parts:
             continue
-        if "from framework" in path.read_text(encoding="utf-8"):
+        if "from poorbricks" in path.read_text(encoding="utf-8"):
             rel = path.parent.relative_to(_PIPELINES_ROOT)
             keys.append(".".join(rel.parts))
     return keys

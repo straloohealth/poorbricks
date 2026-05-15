@@ -1,7 +1,7 @@
 """Import every framework-registered pipeline to populate the registry.
 
 This traverses tables/**/pipeline.py and imports each module that imports
-from framework, which triggers @pipeline decorators to register themselves.
+from poorbricks, which triggers @pipeline decorators to register themselves.
 
 Safe to call multiple times (idempotent).
 """
@@ -17,7 +17,7 @@ PIPELINES_ROOT = REPO_ROOT / "tables"
 
 
 def discover_all_pipelines() -> None:
-    """Import every pipeline.py that uses `from framework`.
+    """Import every pipeline.py that uses `from poorbricks`.
 
     Populates the pipeline registry so all_pipelines() and list_pipelines()
     return results.
@@ -30,7 +30,7 @@ def discover_all_pipelines() -> None:
             continue
 
         text = pipeline_path.read_text(encoding="utf-8")
-        if "from framework" not in text:
+        if "from poorbricks" not in text:
             continue
 
         rel = pipeline_path.relative_to(REPO_ROOT)

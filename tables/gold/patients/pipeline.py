@@ -11,7 +11,7 @@ from typing import Annotated
 
 from pyspark.sql import DataFrame
 
-from framework import ContractSource, Inputs, pipeline
+from poorbricks import ContractSource, Inputs, pipeline
 from tables.gold.patients.config import (
     PATIENTS_TABLE_NAME,
     PatientGold,

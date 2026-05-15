@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pyspark.sql import DataFrame
 
-from framework import Inputs, MongoSource, pipeline
+from poorbricks import Inputs, MongoSource, pipeline
 from tables.bronze.smith.navigators.config import (
     SMITH_NAVIGATORS_BRONZE_TABLE_NAME,
     SmithNavigatorBronze,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from framework import scenario
+from poorbricks import scenario
 from tables.gold.patients.pipeline import PatientsGoldInputs
 
 NOW = datetime(2026, 5, 8, 12, 0, 0)

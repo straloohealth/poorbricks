@@ -11,7 +11,7 @@ from typing import Annotated
 
 from pyspark.sql import DataFrame
 
-from framework import Inputs, MongoSource, pipeline
+from poorbricks import Inputs, MongoSource, pipeline
 from tables.bronze.smith.tags.config import (
     SMITH_TAGS_BRONZE_TABLE_NAME,
     SmithTagBronze,

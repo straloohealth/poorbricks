@@ -10,7 +10,7 @@ from typing import Annotated
 
 from pyspark.sql import DataFrame
 
-from framework import ContractSource, Inputs, pipeline
+from poorbricks import ContractSource, Inputs, pipeline
 from tables.silver.dim_patient.config import (
     DIM_PATIENT_TABLE_NAME,
     DimPatient,

@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 from pyspark.sql.types import StructType
 
-from framework.discovery import discover_all_pipelines
-from framework.inputs import ContractSource
-from framework.registry import all_pipelines
+from poorbricks.discovery import discover_all_pipelines
+from poorbricks.inputs import ContractSource
+from poorbricks.registry import all_pipelines
 from utils.contracts import fetch_contract
 
 

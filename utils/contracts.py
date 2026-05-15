@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def _client() -> pymongo.MongoClient[Any]:
     """Get a MongoDB client connected to the configured URI."""
-    from framework.settings import settings
+    from poorbricks.settings import settings
 
     return pymongo.MongoClient(settings.mongo_uri)
 
@@ -25,7 +25,7 @@ def fetch_contract(table_name: str) -> dict[str, Any]:
 
     Raises KeyError if not found.
     """
-    from framework.settings import settings
+    from poorbricks.settings import settings
 
     doc = _client()[settings.contracts_db][settings.contracts_collection].find_one(
         {"_id": table_name}
@@ -77,7 +77,7 @@ def push_contract(
     Stores schema JSON, example rows, and profiling stats (row count, null rates,
     enum samples). The profile is used as a baseline for future drift detection.
     """
-    from framework.settings import settings
+    from poorbricks.settings import settings
 
     _client()[settings.contracts_db][settings.contracts_collection].replace_one(
         {"_id": table_name},

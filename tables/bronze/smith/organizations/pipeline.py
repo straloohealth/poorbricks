@@ -10,7 +10,7 @@ from typing import Annotated
 
 from pyspark.sql import DataFrame
 
-from framework import Inputs, MongoSource, pipeline
+from poorbricks import Inputs, MongoSource, pipeline
 from tables.bronze.smith.organizations.config import (
     SMITH_ORGANIZATIONS_BRONZE_TABLE_NAME,
     SmithOrganizationBronze,

@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from framework.discovery import discover_all_pipelines
-from framework.registry import all_pipelines
-from framework.runner import run
+from poorbricks.discovery import discover_all_pipelines
+from poorbricks.registry import all_pipelines
+from poorbricks.runner import run
 from utils.postgres import PostgresLoader
 
 
