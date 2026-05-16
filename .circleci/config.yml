@@ -24,7 +24,7 @@ _defaults:
       - *restore_cache
       - *install
       - *save_cache
-  docker_images:
+  docker_images: &docker_images
     - image: docker.io/danielspeixoto/databricks
     - image: mongo:7
     - image: postgres:16
@@ -58,16 +58,19 @@ jobs:
       - *setup
       - run:
           name: Wait for MongoDB
-          command: until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1; do sleep 2; done && echo "MongoDB ready"
-  
+          command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
+
       - run:
-          name: Unit tests (all levels, fixtures mode)
+          name: Unit tests (tables + validation)
           command: >
-            poetry run pytest tables/
+            poetry run pytest tables/ validation/
             -n 2 --dist loadgroup
             -m "not integration"
             --junitxml=test-results-unit.xml
             --tb=short -v
+      - run:
+          name: Architecture validation
+          command: poetry run poorbricks-verify --mode arch
       - store_test_results:
           path: test-results-unit.xml
 
@@ -93,7 +96,7 @@ jobs:
       - *setup
       - run:
           name: Wait for MongoDB
-          command: until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1; do sleep 2; done && echo "MongoDB ready"
+          command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
       - run:
           name: Build wheel
           command: poetry build -f wheel
@@ -111,12 +114,18 @@ jobs:
     steps:
       - *setup
       - run:
-          name: Wait for services
+          name: Wait for MongoDB and PostgreSQL
           command: |
-            until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1
-            do sleep 2; done && echo "MongoDB ready"
-            until pg_isready -h localhost -U analytics -d analytics >/dev/null 2>&1
-            do sleep 2; done && echo "PostgreSQL ready"
+            echo "Waiting for MongoDB on port 27017..."
+            for i in {1..30}; do
+              timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break
+              sleep 1
+            done
+            echo "Waiting for PostgreSQL on port 5432..."
+            for i in {1..30}; do
+              timeout 1 bash -c 'echo > /dev/tcp/localhost/5432' 2>/dev/null && echo "PostgreSQL ready" && break
+              sleep 1
+            done
       - run:
           name: Distributed pipeline test (bronze → silver → gold)
           command: poetry run python scripts/test_distributed_pipeline.py
