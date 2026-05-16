@@ -31,7 +31,9 @@ class TestDimPatientTransform:
             "507f1f77bcf86cd799439013",
         }
         by_id = {r["patient_id"]: r for r in result}
-        assert by_id["507f1f77bcf86cd799439011"]["mongo_id"] == "507f1f77bcf86cd799439011"
+        assert (
+            by_id["507f1f77bcf86cd799439011"]["mongo_id"] == "507f1f77bcf86cd799439011"
+        )
         assert by_id["507f1f77bcf86cd799439013"]["origin_slug"] == "ge"
         assert by_id["507f1f77bcf86cd799439012"]["is_active"] is False
         assert by_id["507f1f77bcf86cd799439011"]["name"] == "Test Patient"

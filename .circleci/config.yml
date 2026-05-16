@@ -18,6 +18,20 @@ _defaults:
       key: v2-deps-{{ checksum "poetry.lock" }}
       paths:
         - /root/.cache/pypoetry/virtualenvs
+  setup: &setup
+    steps:
+      - checkout
+      - *restore_cache
+      - *install
+      - *save_cache
+  docker_images:
+    - image: docker.io/danielspeixoto/databricks
+    - image: mongo:7
+    - image: postgres:16
+      environment:
+        POSTGRES_DB: analytics
+        POSTGRES_USER: analytics
+        POSTGRES_PASSWORD: analytics
 
 # ── Jobs ───────────────────────────────────────────────────────────────────
 jobs:
@@ -26,10 +40,7 @@ jobs:
     docker: *image
     resource_class: medium
     steps:
-      - checkout
-      - *restore_cache
-      - *install
-      - *save_cache
+      - *setup
       - run:
           name: Ruff lint
           command: poetry run ruff check .
@@ -41,13 +52,10 @@ jobs:
           command: poetry run mypy poorbricks/ utils/ validation/ tests/
 
   unit-tests:
-    docker: *image
+    docker: *docker_images
     resource_class: medium
     steps:
-      - checkout
-      - *restore_cache
-      - *install
-      - *save_cache
+      - *setup
       - run:
           name: Unit tests (all levels, fixtures mode)
           command: >
@@ -60,13 +68,10 @@ jobs:
           path: test-results-unit.xml
 
   multi-repo-tests:
-    docker: *image
+    docker: *docker_images
     resource_class: medium
     steps:
-      - checkout
-      - *restore_cache
-      - *install
-      - *save_cache
+      - *setup
       - run:
           name: Multi-repo contract verification scenarios
           command: >
@@ -78,20 +83,10 @@ jobs:
           path: test-results-multi-repo.xml
 
   build-and-smoke:
-    docker:
-      - image: docker.io/danielspeixoto/databricks
-      - image: postgres:16
-        environment:
-          POSTGRES_DB: analytics
-          POSTGRES_USER: analytics
-          POSTGRES_PASSWORD: analytics
-      - image: mongo:7
+    docker: *docker_images
     resource_class: medium
     steps:
-      - checkout
-      - *restore_cache
-      - *install
-      - *save_cache
+      - *setup
       - run:
           name: Wait for MongoDB
           command: until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1; do sleep 2; done && echo "MongoDB ready"
@@ -107,20 +102,10 @@ jobs:
           destination: wheel
 
   integration-tests:
-    docker:
-      - image: docker.io/danielspeixoto/databricks
-      - image: mongo:7
-      - image: postgres:16
-        environment:
-          POSTGRES_DB: analytics
-          POSTGRES_USER: analytics
-          POSTGRES_PASSWORD: analytics
+    docker: *docker_images
     resource_class: large
     steps:
-      - checkout
-      - *restore_cache
-      - *install
-      - *save_cache
+      - *setup
       - run:
           name: Wait for services
           command: |

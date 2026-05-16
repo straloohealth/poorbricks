@@ -17,93 +17,44 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
 
 import streamlit as st
 
-# Ensure the project root is in sys.path for imports
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from streamlit_app import contract_view, runner_view  # noqa: E402
-from utils.contracts import fetch_contract, list_contracts  # noqa: E402
+from streamlit_app import cache, contract, header, runner, sidebar, theme  # noqa: E402
 
 st.set_page_config(
     page_title="Poorbricks Contracts",
+    page_icon="◆",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
-@st.cache_data(ttl=60)
-def _cached_summaries() -> list[dict[str, Any]]:
-    return list_contracts()
-
-
-@st.cache_data(ttl=60)
-def _cached_contract(table_name: str) -> dict[str, Any]:
-    return fetch_contract(table_name)
-
-
-def _sidebar() -> str | None:
-    st.sidebar.title("📜 Contracts")
-    if st.sidebar.button("🔄 Refresh contracts"):
-        _cached_summaries.clear()
-        _cached_contract.clear()
-
-    summaries = _cached_summaries()
-    if not summaries:
-        st.sidebar.warning(
-            "No contracts found. Run "
-            "`poetry run python scripts/push_contract.py --all`."
-        )
-        return None
-
-    by_level: dict[str, list[dict[str, Any]]] = {}
-    for summary in summaries:
-        by_level.setdefault(summary.get("level", "?"), []).append(summary)
-
-    level_order = ["bronze", "silver", "gold"]
-    options: list[str] = []
-    captions: dict[str, str] = {}
-    for level in level_order + sorted(set(by_level) - set(level_order)):
-        for summary in sorted(by_level.get(level, []), key=lambda s: s["table_name"]):
-            options.append(summary["table_name"])
-            captions[summary["table_name"]] = f"{level} / {summary.get('storage', '?')}"
-
-    if not options:
-        return None
-
-    selected = st.sidebar.radio(
-        "Pipeline",
-        options=options,
-        format_func=lambda t: f"{t}  ({captions[t]})",
-        index=0,
-    )
-    return selected
+theme.inject()
 
 
 def main() -> None:
-    selected = _sidebar()
+    selected = sidebar.render()
     if selected is None:
-        st.title("Poorbricks Contracts Explorer")
-        st.info(
-            "No contract is selected. Push a contract first:\n\n"
-            "```\npoetry run python scripts/push_contract.py --all\n```"
-        )
+        header.render_empty_state()
         return
 
     try:
-        contract = _cached_contract(selected)
+        contract_doc = cache.cached_contract(selected)
     except KeyError as exc:
         st.error(str(exc))
         return
 
-    contract_tab, runner_tab = st.tabs(["📋 Contract", "🧪 Run tests"])
+    header.render_header(contract_doc)
+
+    contract_tab, runner_tab = st.tabs(["Contract", "Test runner"])
     with contract_tab:
-        contract_view.render(contract)
+        contract.render(contract_doc)
     with runner_tab:
-        runner_view.render(contract)
+        runner.render(contract_doc)
+
+    header.render_footer(contract_doc)
 
 
 main()

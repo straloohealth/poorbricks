@@ -35,7 +35,7 @@ def _df(spark: SparkSession, rows: list[dict[str, object]]) -> object:
 @pytest.fixture
 def isolated_snapshots_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Redirect SNAPSHOTS_DIR so tests don't pollute the real dir."""
-    monkeypatch.setattr(".snapshot.SNAPSHOTS_DIR", tmp_path)
+    monkeypatch.setattr("poorbricks.snapshot.SNAPSHOTS_DIR", tmp_path)
     return tmp_path
 
 

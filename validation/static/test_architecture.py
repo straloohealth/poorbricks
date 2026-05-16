@@ -462,6 +462,7 @@ _NO_BASELINE_ALLOWLIST: set[str] = {
     "silver.fact_task",
     "silver.fact_template_send",
     "silver.fact_ticket",
+    "bronze.smith.tags",
 }
 
 

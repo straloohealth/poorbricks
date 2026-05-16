@@ -65,7 +65,6 @@ def _default_fetcher() -> ContractFetcher:
     return fetch_contract
 
 
-
 def _compare_schemas(
     local_struct: Any, published_schema_json: dict[str, Any]
 ) -> list[str]:

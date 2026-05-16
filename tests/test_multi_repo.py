@@ -39,20 +39,33 @@ pytestmark = pytest.mark.xdist_group("multi_repo")
 
 @pytest.fixture(autouse=True)
 def _clear_registry_and_modules() -> Iterator[None]:
-    """Clear the global pipeline + scenario registries and re-importable modules."""
-    from poorbricks.registry import _pipelines, _scenarios
+    """Isolate global pipeline + scenario registries around each test.
 
-    _pipelines.clear()
-    _scenarios.clear()
+    Snapshot the dicts on entry, replace them with empty copies so the
+    test gets a clean slate, then restore on exit. Restoring (rather than
+    clearing) keeps registrations from sibling test modules intact when
+    pytest-xdist routes them to the same worker.
+    """
+    from poorbricks import registry as _registry
+
+    saved_pipelines = dict(_registry._pipelines)
+    saved_scenarios = {k: dict(v) for k, v in _registry._scenarios.items()}
+
+    _registry._pipelines.clear()
+    _registry._scenarios.clear()
     for name in list(sys.modules):
         if any(
             name == f"tables.{s}" or name.startswith(f"tables.{s}.")
             for s in SCENARIO_NAMES
         ):
             del sys.modules[name]
-    yield
-    _pipelines.clear()
-    _scenarios.clear()
+    try:
+        yield
+    finally:
+        _registry._pipelines.clear()
+        _registry._pipelines.update(saved_pipelines)
+        _registry._scenarios.clear()
+        _registry._scenarios.update(saved_scenarios)
 
 
 def _smith_users_contract() -> dict[str, Any]:
