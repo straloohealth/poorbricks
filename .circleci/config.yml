@@ -1,41 +1,155 @@
 version: 2.1
-setup: true
 
-orbs:
-  continuation: circleci/continuation@0.3.1
+# ── Anchors ────────────────────────────────────────────────────────────────
+_defaults:
+  docker: &image
+    - image: docker.io/danielspeixoto/databricks
+  restore: &restore_cache
+    restore_cache:
+      keys:
+        - v2-deps-{{ checksum "poetry.lock" }}
+        - v2-deps-
+  install: &install
+    run:
+      name: Install dependencies
+      command: pip install --quiet poetry && poetry install --no-interaction
+  save: &save_cache
+    save_cache:
+      key: v2-deps-{{ checksum "poetry.lock" }}
+      paths:
+        - /root/.cache/pypoetry/virtualenvs
 
-# This is a setup config — it does nothing except generate the real
-# workload from .circleci/generate-config.py and feed it to the
-# continuation orb. All jobs (lint, per-domain tests, integration,
-# production-checks, sync, deploy) live in the dynamic config.
-#
-# Why a generator: the team wants per-domain parallel test jobs so a
-# slow domain can't gate the rest of the suite. CircleCI's matrix
-# syntax can't introspect folders on disk; a Python emitter can.
-
+# ── Jobs ───────────────────────────────────────────────────────────────────
 jobs:
-  setup:
-    docker:
-      - image: docker.io/danielspeixoto/databricks
+
+  lint-and-type-check:
+    docker: *image
+    resource_class: medium
     steps:
       - checkout
+      - *restore_cache
+      - *install
+      - *save_cache
       - run:
-          name: Install jq (continuation/continue requires it) + pyyaml (generator)
-          command: |
-            if ! command -v jq >/dev/null 2>&1; then
-              apt-get update -qq && apt-get install -y -qq jq
-            fi
-            pip install --quiet pyyaml
+          name: Ruff lint
+          command: poetry run ruff check .
       - run:
-          name: Generate dynamic config from tables/* domains
-          command: |
-            python .circleci/generate-config.py > /tmp/dynamic_config.yml
-            echo "--- generated config (head) ---"
-            head -80 /tmp/dynamic_config.yml
-      - continuation/continue:
-          configuration_path: /tmp/dynamic_config.yml
+          name: Ruff format check
+          command: poetry run ruff format --check .
+      - run:
+          name: MyPy
+          command: poetry run mypy poorbricks/ utils/ validation/ tests/
 
+  unit-tests:
+    docker: *image
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install
+      - *save_cache
+      - run:
+          name: Unit tests (all levels, fixtures mode)
+          command: >
+            poetry run pytest tables/
+            -n 2 --dist loadgroup
+            -m "not integration"
+            --junitxml=test-results-unit.xml
+            --tb=short -v
+      - store_test_results:
+          path: test-results-unit.xml
+
+  multi-repo-tests:
+    docker: *image
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install
+      - *save_cache
+      - run:
+          name: Multi-repo contract verification scenarios
+          command: >
+            poetry run pytest tests/test_multi_repo.py
+            -o "addopts="
+            --junitxml=test-results-multi-repo.xml
+            --tb=short -v
+      - store_test_results:
+          path: test-results-multi-repo.xml
+
+  build-and-smoke:
+    docker: *image
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install
+      - *save_cache
+      - run:
+          name: Build wheel
+          command: poetry build -f wheel
+      - run:
+          name: Simulate isolated table-repo install
+          command: poetry run python scripts/simulate_table_repo.py
+          no_output_timeout: 10m
+      - store_artifacts:
+          path: dist
+          destination: wheel
+
+  integration-tests:
+    docker:
+      - image: docker.io/danielspeixoto/databricks
+      - image: mongo:7
+      - image: postgres:16
+        environment:
+          POSTGRES_DB: analytics
+          POSTGRES_USER: analytics
+          POSTGRES_PASSWORD: analytics
+    resource_class: large
+    steps:
+      - checkout
+      - *restore_cache
+      - *install
+      - *save_cache
+      - run:
+          name: Wait for services
+          command: |
+            until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1
+            do sleep 2; done && echo "MongoDB ready"
+            until pg_isready -h localhost -U analytics -d analytics >/dev/null 2>&1
+            do sleep 2; done && echo "PostgreSQL ready"
+      - run:
+          name: Distributed pipeline test (bronze → silver → gold)
+          command: poetry run python scripts/test_distributed_pipeline.py
+          no_output_timeout: 20m
+
+# ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
-  setup:
+  test:
+    when:
+      not:
+        equal: [main, << pipeline.git.branch >>]
     jobs:
-      - setup
+      - lint-and-type-check
+      - unit-tests:
+          requires: [lint-and-type-check]
+      - multi-repo-tests:
+          requires: [lint-and-type-check]
+      - build-and-smoke:
+          requires: [lint-and-type-check]
+      - integration-tests:
+          requires: [unit-tests, multi-repo-tests, build-and-smoke]
+
+  deploy:
+    when:
+      equal: [main, << pipeline.git.branch >>]
+    jobs:
+      - lint-and-type-check
+      - unit-tests:
+          requires: [lint-and-type-check]
+      - multi-repo-tests:
+          requires: [lint-and-type-check]
+      - build-and-smoke:
+          requires: [lint-and-type-check]
+      - integration-tests:
+          requires: [unit-tests, multi-repo-tests, build-and-smoke]

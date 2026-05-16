@@ -106,11 +106,7 @@ def get_pipeline(
                 f"Known: {sorted(_pipelines)}"
             )
         return _pipelines[key]
-    matches = [
-        p
-        for p in _pipelines.values()
-        if p.table_name == table_name
-    ]
+    matches = [p for p in _pipelines.values() if p.table_name == table_name]
     if not matches:
         raise KeyError(
             f"Pipeline {table_name!r} not registered. Known: {sorted(_pipelines)}"
