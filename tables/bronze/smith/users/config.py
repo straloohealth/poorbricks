@@ -40,32 +40,21 @@ class SmithUserBronze(ValidatedStruct):
     externalId: str | None = Field(
         description="External identifier from the source system."
     )
-    name: str | None = Field(
-        description="Full name of the patient."
-    )
-    email: str | None = Field(
-        description="Email address of the patient."
-    )
-    phone: str | None = Field(
-        description="Phone number of the patient."
-    )
+    name: str | None = Field(description="Full name of the patient.")
+    email: str | None = Field(description="Email address of the patient.")
+    phone: str | None = Field(description="Phone number of the patient.")
     origin: str | None = Field(
         description="Program origin (e.g. 'aon', 'ge', 'camed')."
     )
     active: bool | None = Field(
-        default=None,
-        description="Whether the patient is currently active."
+        default=None, description="Whether the patient is currently active."
     )
     createdAt: datetime | None = Field(
         default=None,
-        description="Timestamp when the patient record was created in Smith."
+        description="Timestamp when the patient record was created in Smith.",
     )
-    birth_date: datetime | None = Field(
-        description="Patient date of birth."
-    )
-    cpf: str | None = Field(
-        description="CPF (Brazilian tax ID) if available."
-    )
+    birth_date: datetime | None = Field(description="Patient date of birth.")
+    cpf: str | None = Field(description="CPF (Brazilian tax ID) if available.")
     extraFields: list[ExtraField] | None = Field(
         description="Additional fields from the patient profile."
     )

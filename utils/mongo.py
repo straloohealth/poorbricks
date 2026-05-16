@@ -55,7 +55,9 @@ def get_all(
         id_field = None
         for field in schema.fields:
             field_type_str = str(field.dataType)
-            if field.name.endswith("_id") and ("StringType" in field_type_str or "string" in field_type_str):
+            if field.name.endswith("_id") and (
+                "StringType" in field_type_str or "string" in field_type_str
+            ):
                 id_field = field.name
                 break
 

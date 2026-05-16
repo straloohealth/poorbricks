@@ -25,8 +25,8 @@ import streamlit as st
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from streamlit_app import contract_view, runner_view
-from utils.contracts import fetch_contract, list_contracts
+from streamlit_app import contract_view, runner_view  # noqa: E402
+from utils.contracts import fetch_contract, list_contracts  # noqa: E402
 
 st.set_page_config(
     page_title="Poorbricks Contracts",
@@ -67,13 +67,9 @@ def _sidebar() -> str | None:
     options: list[str] = []
     captions: dict[str, str] = {}
     for level in level_order + sorted(set(by_level) - set(level_order)):
-        for summary in sorted(
-            by_level.get(level, []), key=lambda s: s["table_name"]
-        ):
+        for summary in sorted(by_level.get(level, []), key=lambda s: s["table_name"]):
             options.append(summary["table_name"])
-            captions[summary["table_name"]] = (
-                f"{level} / {summary.get('storage', '?')}"
-            )
+            captions[summary["table_name"]] = f"{level} / {summary.get('storage', '?')}"
 
     if not options:
         return None

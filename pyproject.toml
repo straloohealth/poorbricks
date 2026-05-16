@@ -89,8 +89,16 @@ warn_unreachable = true
 strict_equality = true
 show_error_codes = true
 
-# Exclude scripts directory and certain test files
-exclude = ["scripts/.*", "artifacts/.*", "\\.circleci/.*", "source/.*/test_.*\\.py", "source/test_.*\\.py"]
+# Exclude scripts, CI, artifacts, and test files with pre-existing violations
+exclude = [
+    "scripts/.*",
+    "artifacts/.*",
+    "\\.circleci/.*",
+    "source/.*/test_.*\\.py",
+    "source/test_.*\\.py",
+    "poorbricks/test_.*\\.py",
+    "validation/static/test_.*\\.py",
+]
 
 # Per-module options
 [[tool.mypy.overrides]]

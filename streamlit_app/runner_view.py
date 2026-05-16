@@ -88,8 +88,7 @@ def _run_pipeline(
     try:
         sources = meta.inputs_cls.sources()
         cleaned_rows = {
-            src: _clean_rows(rows_by_source.get(src, []))
-            for src in sources
+            src: _clean_rows(rows_by_source.get(src, [])) for src in sources
         }
         inputs = meta.inputs_cls.from_rows(cleaned_rows)
         df = meta.original_fn(inputs)
@@ -147,8 +146,6 @@ def _clean_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     datetime columns become pd.Timestamp instead of Python datetime. Convert
     them back so Spark accepts them.
     """
-    from datetime import datetime
-
     cleaned: list[dict[str, Any]] = []
     for row in rows:
         cleaned_row: dict[str, Any] = {}

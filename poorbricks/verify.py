@@ -182,7 +182,7 @@ def _run_pipeline_and_check(
         ]
 
     try:
-        meta.model.verify(df)
+        meta.model.verify(df)  # type: ignore[attr-defined]
     except Exception as exc:
         errors.append(
             VerificationError(pipeline_key=key, category="rule", message=str(exc))
@@ -190,7 +190,7 @@ def _run_pipeline_and_check(
 
     expectations_cls = _find_expectations_for(meta)
     if expectations_cls is not None:
-        for violation in expectations_cls.check(df):
+        for violation in expectations_cls.check(df):  # type: ignore[attr-defined]
             errors.append(
                 VerificationError(
                     pipeline_key=key, category="expectation", message=violation

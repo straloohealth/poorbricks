@@ -40,7 +40,7 @@ def fetch_contract(table_name: str) -> dict[str, Any]:
             f"No contract found for table {table_name!r}. Run: "
             f"poetry run python scripts/push_contract.py --pipeline {table_name}"
         )
-    return doc
+    return doc  # type: ignore[no-any-return]
 
 
 def list_contracts() -> list[dict[str, Any]]:

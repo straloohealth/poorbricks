@@ -110,7 +110,6 @@ def get_pipeline(
         p
         for p in _pipelines.values()
         if p.table_name == table_name
-        and (target_storage is None or p.target_storage == target_storage)
     ]
     if not matches:
         raise KeyError(

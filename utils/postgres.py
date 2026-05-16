@@ -132,7 +132,9 @@ class PostgresLoader:
                                 values.append("\\N")
                             else:
                                 # Escape backslashes and newlines
-                                str_val = str_val.replace("\\", "\\\\").replace("\n", "\\n")
+                                str_val = str_val.replace("\\", "\\\\").replace(
+                                    "\n", "\\n"
+                                )
                                 values.append(str_val)
                     buffer.write("\t".join(values) + "\n")
 

@@ -131,9 +131,7 @@ def _inputs_section(contract: dict[str, Any]) -> None:
         elif kind == "TableSource":
             description = f"delta {entry.get('table_name')} ({entry.get('model')})"
         elif kind == "PostgresTableSource":
-            description = (
-                f"postgres {entry.get('schema_name')}.{entry.get('table')}"
-            )
+            description = f"postgres {entry.get('schema_name')}.{entry.get('table')}"
         rows.append({"name": entry["name"], "kind": kind, "details": description})
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -149,9 +147,7 @@ def _profile_section(contract: dict[str, Any]) -> None:
     if null_rates:
         st.caption("Null rates")
         ranked = sorted(null_rates.items(), key=lambda kv: kv[1], reverse=True)
-        df = pd.DataFrame(ranked, columns=["column", "null_rate"]).set_index(
-            "column"
-        )
+        df = pd.DataFrame(ranked, columns=["column", "null_rate"]).set_index("column")
         st.bar_chart(df)
 
     enum_samples = profile.get("enum_samples") or {}
