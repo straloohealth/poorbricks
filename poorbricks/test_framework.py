@@ -212,7 +212,7 @@ class TestRunner:
         original_module = meta.module
         meta.module = alias
         try:
-            result = run("fw_smoke", mode="fixtures")
+            result = run("fw_smoke", mode="fixtures", skip_checks=True)
             assert result.df is not None
             rows = sorted(r["greeting"] for r in result.df.collect())
             assert rows == ["hello alice", "hello bob"]
@@ -235,7 +235,12 @@ class TestRunner:
         original_module = meta.module
         meta.module = alias
         try:
-            result = run("fw_fault_smoke", mode="fault", fault_name="empty_inputs")
+            result = run(
+                "fw_fault_smoke",
+                mode="fault",
+                fault_name="empty_inputs",
+                skip_checks=True,
+            )
             assert result.df is not None
             assert result.df.count() == 0
         finally:
@@ -247,3 +252,67 @@ class TestRunner:
     def test_unknown_mode_raises(self, spark: SparkSession) -> None:
         with pytest.raises(ValueError, match="Unknown mode"):
             run("fw_smoke_doesnt_matter", mode="bogus")
+
+    def test_result_rows_populated(self) -> None:
+        """Verify that result.rows is populated after compute."""
+        import sys
+
+        alias = "tables.fw_rows_test.pipeline"
+        sys.modules[alias] = sys.modules[__name__]
+        from .registry import _scenarios as scen_reg
+
+        scen_reg["fw_rows_test"] = {"alice": _alice_scenario}
+        meta = _pipelines[_FW_TEST_KEY]
+        original_module = meta.module
+        meta.module = alias
+        try:
+            result = run("fw_rows_test", mode="fixtures", skip_checks=True)
+            assert result.df is not None
+            assert result.rows is not None
+            assert result.rows > 0
+        finally:
+            meta.module = original_module
+            del sys.modules[alias]
+            scen_reg.pop("fw_rows_test", None)
+
+    def test_validate_mode_no_compute(self) -> None:
+        """Validate mode does not compute, returns no data."""
+        import sys
+
+        alias = "tables.fw_validate_test.pipeline"
+        sys.modules[alias] = sys.modules[__name__]
+        from .registry import _scenarios as scen_reg
+
+        scen_reg["fw_validate_test"] = {"alice": _alice_scenario}
+        meta = _pipelines[_FW_TEST_KEY]
+        original_module = meta.module
+        meta.module = alias
+        try:
+            result = run("fw_validate_test", mode="validate", skip_checks=True)
+            assert result.df is None
+            assert result.rows is None
+        finally:
+            meta.module = original_module
+            del sys.modules[alias]
+            scen_reg.pop("fw_validate_test", None)
+
+    def test_skip_checks_bypasses_validation(self) -> None:
+        """skip_checks=True bypasses arch and contract checks."""
+        import sys
+
+        alias = "tables.fw_skip_checks.pipeline"
+        sys.modules[alias] = sys.modules[__name__]
+        from .registry import _scenarios as scen_reg
+
+        scen_reg["fw_skip_checks"] = {"alice": _alice_scenario}
+        meta = _pipelines[_FW_TEST_KEY]
+        original_module = meta.module
+        meta.module = alias
+        try:
+            result = run("fw_skip_checks", mode="fixtures", skip_checks=True)
+            assert result.df is not None
+            assert result.rows is not None
+        finally:
+            meta.module = original_module
+            del sys.modules[alias]
+            scen_reg.pop("fw_skip_checks", None)

@@ -44,7 +44,9 @@ def compute(inputs: DimPatientInputs) -> DataFrame:
     # Defensive dedup on mongo_id (MongoDB ObjectId), the true unique key.
     # Filter out rows with null mongo_id — they have no valid key.
     with_key = trimmed.filter(f.col("mongo_id").isNotNull())
-    window = Window.partitionBy("mongo_id").orderBy(f.col("createdAt").desc_nulls_last())
+    window = Window.partitionBy("mongo_id").orderBy(
+        f.col("createdAt").desc_nulls_last()
+    )
     deduped = (
         with_key.withColumn("_rn", f.row_number().over(window))
         .filter(f.col("_rn") == 1)

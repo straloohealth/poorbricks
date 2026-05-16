@@ -14,10 +14,15 @@ if TYPE_CHECKING:
 
 
 def _client() -> pymongo.MongoClient[Any]:
-    """Get a MongoDB client connected to the configured URI."""
+    """Get a MongoDB client connected to the contracts URI.
+
+    Falls back to ``mongo_uri`` if ``contracts_mongo_uri`` is unset, so a
+    single-Mongo deployment still works.
+    """
     from poorbricks.settings import settings
 
-    return pymongo.MongoClient(settings.mongo_uri)
+    uri = settings.contracts_mongo_uri or settings.mongo_uri
+    return pymongo.MongoClient(uri)
 
 
 def fetch_contract(table_name: str) -> dict[str, Any]:
@@ -31,11 +36,29 @@ def fetch_contract(table_name: str) -> dict[str, Any]:
         {"_id": table_name}
     )
     if doc is None:
-        raise KeyError(
-            f"No contract found for table {table_name!r}. Run: "
-            f"poetry run python scripts/push_contract.py --pipeline {table_name}"
-        )
-    return doc
+        raise KeyError(f"No contract found for table {table_name!r}.")
+    return doc  # type: ignore[no-any-return]
+
+
+def list_contracts() -> list[dict[str, Any]]:
+    """Return a lightweight summary of every contract in the store.
+
+    Used by the Streamlit explorer to populate its sidebar without
+    pulling fixture rows for every pipeline.
+    """
+    from poorbricks.settings import settings
+
+    cursor = _client()[settings.contracts_db][settings.contracts_collection].find(
+        {},
+        {
+            "table_name": 1,
+            "level": 1,
+            "storage": 1,
+            "comment": 1,
+            "pushed_at": 1,
+        },
+    )
+    return list(cursor)
 
 
 def profile_dataframe(df: DataFrame) -> dict[str, Any]:
@@ -71,11 +94,21 @@ def push_contract(
     pipeline_key: str,
     level: str,
     profile: dict[str, Any],
+    storage: str = "delta",
+    comment: str = "",
+    module: str = "",
+    fields: list[dict[str, Any]] | None = None,
+    validation_rules: list[dict[str, Any]] | None = None,
+    expectations: dict[str, Any] | None = None,
+    inputs: list[dict[str, Any]] | None = None,
+    fixtures: list[dict[str, Any]] | None = None,
 ) -> None:
     """Upsert a contract document into the contracts collection.
 
-    Stores schema JSON, example rows, and profiling stats (row count, null rates,
-    enum samples). The profile is used as a baseline for future drift detection.
+    Stores the full pipeline configuration so the Streamlit explorer can
+    render fields, expectations, inputs, fixtures, and sample data without
+    importing pipeline code. The profile is used as a baseline for future
+    drift detection.
     """
     from poorbricks.settings import settings
 
@@ -88,6 +121,14 @@ def push_contract(
             "example_rows": example_rows,
             "pipeline_key": pipeline_key,
             "level": level,
+            "storage": storage,
+            "comment": comment,
+            "module": module,
+            "fields": fields or [],
+            "validation_rules": validation_rules or [],
+            "expectations": expectations or {},
+            "inputs": inputs or [],
+            "fixtures": fixtures or [],
             "profile": profile,
             "pushed_at": datetime.utcnow().isoformat(),
         },
@@ -95,4 +136,9 @@ def push_contract(
     )
 
 
-__all__ = ["fetch_contract", "profile_dataframe", "push_contract"]
+__all__ = [
+    "fetch_contract",
+    "list_contracts",
+    "profile_dataframe",
+    "push_contract",
+]

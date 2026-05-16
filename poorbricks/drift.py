@@ -61,10 +61,7 @@ def check_drift(
     try:
         contract = fetch_contract(table_name)
     except KeyError:
-        raise ValueError(
-            f"No contract for {table_name!r}. Run: "
-            f"poetry run python scripts/push_contract.py --pipeline {table_name}"
-        ) from None
+        raise ValueError(f"No contract for {table_name!r}.") from None
 
     baseline_profile = contract.get("profile", {})
     baseline_row_count = baseline_profile.get("row_count", 0)

@@ -3,10 +3,14 @@ name = "poorbricks-framework"
 version = "0.1.0"
 description = "Local Spark framework for PySpark pipeline development"
 authors = ["Daniel Speixoto"]
-package-mode = false
+packages = [
+    { include = "poorbricks" },
+    { include = "validation" },
+    { include = "utils" },
+]
 
 [tool.poetry.scripts]
-generate-fields = "scripts.generate_fields:main"
+poorbricks-verify = "poorbricks.verify:main"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
@@ -22,6 +26,7 @@ autopep8 = "^2.3.2"
 pandas = "^3.0.1"
 openpyxl = "^3.1.5"
 psycopg2-binary = "^2.9"
+streamlit = "^1.40"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.1"
@@ -45,6 +50,7 @@ testpaths = ["."]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+norecursedirs = ["test_table_repo", "artifacts", "dist", ".venv"]
 addopts = [
     "-v",
     "-n", "4",
@@ -58,6 +64,7 @@ addopts = [
 markers = [
     "spark: marks tests that require Spark session",
     "integration: marks tests that require MongoDB connection",
+    "xdist_group: pytest-xdist grouping (run on the same worker)",
     "slow: marks tests as slow running"
 ]
 filterwarnings = [
@@ -81,8 +88,16 @@ warn_unreachable = true
 strict_equality = true
 show_error_codes = true
 
-# Exclude scripts directory and certain test files
-exclude = ["scripts/.*", "artifacts/.*", "\\.circleci/.*", "source/.*/test_.*\\.py", "source/test_.*\\.py"]
+# Exclude CI, artifacts, streamlit, secondary test repo, and test files
+exclude = [
+    "artifacts/.*",
+    "\\.circleci/.*",
+    "streamlit_app/.*",
+    "test_table_repo/.*",
+    "(^|/)test_.*\\.py$",
+    "(^|/)conftest\\.py$",
+    "(^|/)tests/.*",
+]
 
 # Per-module options
 [[tool.mypy.overrides]]
@@ -94,7 +109,6 @@ module = [
     "pytest",
     "pytest.*",
     "pydantic_settings.*",
-    "databricks.connect"
 ]
 ignore_missing_imports = true
 
@@ -107,7 +121,7 @@ disallow_untyped_decorators = false
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-exclude = ["artifacts", "scripts", ".circleci", "__pycache__"]
+exclude = ["artifacts", ".circleci", "__pycache__"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP"]

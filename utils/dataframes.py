@@ -3,14 +3,13 @@ from typing import Any, cast
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import DataType, Row, StructType
 
-from utils.strings import get_field_mappings
+from utils.strings import camel_to_snake_case
 
-# Spark Connect (Databricks Serverless / Connect runtime) has its own
-# DataFrame class at ``pyspark.sql.connect.DataFrame`` that is NOT a
-# subclass of ``pyspark.sql.DataFrame``. ``isinstance`` against the
-# classic class returns False, which would force ``create_dataframe``
-# down the list-of-rows path and round-trip every row through the
-# driver. Bundle both at import time.
+# Spark Connect has its own DataFrame class at
+# ``pyspark.sql.connect.DataFrame`` that is NOT a subclass of
+# ``pyspark.sql.DataFrame``. ``isinstance`` against the classic class
+# returns False, forcing ``create_dataframe`` down the list-of-rows path.
+# Bundle both at import time so isinstance checks catch either kind.
 try:
     from pyspark.sql.connect.dataframe import DataFrame as _ConnectDataFrame
 
@@ -124,7 +123,9 @@ def create_dataframe(
     """
     spark = SparkSession.getActiveSession()
     if spark is None:
-        raise ValueError("No active SparkSession found")
+        from utils.spark_local import build_local_spark
+
+        spark = build_local_spark("poorbricks-dataframes")
 
     if isinstance(data, _DATAFRAME_TYPES):
         if target_schema is None:
@@ -198,32 +199,23 @@ def rename_columns(
     df: DataFrame, custom_mapping: dict[str, str] | None = None
 ) -> DataFrame:
     """
-    Rename DataFrame columns using custom mapping and automatic camelCase to snake_case conversion.
+    Rename DataFrame columns. Applies caller-supplied mappings first, then
+    converts any remaining camelCase column names to snake_case.
 
-    This function applies two types of column renaming:
-    1. Custom mappings provided in the custom_mapping parameter
-    2. Automatic camelCase to snake_case conversion for remaining columns
-
-    :param df: Input DataFrame to rename columns for
-    :param custom_mapping: Optional dictionary mapping old column names to new names
-    :return: DataFrame with renamed columns
+    Caller-supplied mappings always win — there are no hidden domain rules.
     """
-    if custom_mapping is None:
-        custom_mapping = {}
+    custom_mapping = custom_mapping or {}
 
-    # Get all column names
-    all_columns = df.columns
+    auto_mapping = {
+        name: camel_to_snake_case(name)
+        for name in df.columns
+        if name not in custom_mapping and camel_to_snake_case(name) != name
+    }
 
-    # Get automatic field mappings for camelCase to snake_case conversion
-    field_mappings = get_field_mappings(all_columns)
+    combined = {**auto_mapping, **custom_mapping}
 
-    # Combine custom mapping with automatic field mappings
-    # Custom mapping takes precedence over automatic conversion
-    combined_mapping = {**field_mappings, **custom_mapping}
-
-    # Apply column renaming
     renamed_df = df
-    for old_name, new_name in combined_mapping.items():
+    for old_name, new_name in combined.items():
         if old_name in renamed_df.columns:
             renamed_df = renamed_df.withColumnRenamed(old_name, new_name)
 

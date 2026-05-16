@@ -1,41 +1,185 @@
 version: 2.1
-setup: true
 
-orbs:
-  continuation: circleci/continuation@0.3.1
+# ── Anchors ────────────────────────────────────────────────────────────────
+restore_cache: &restore_cache
+  restore_cache:
+    keys:
+      - v2-deps-{{ checksum "poetry.lock" }}
+      - v2-deps-
 
-# This is a setup config — it does nothing except generate the real
-# workload from .circleci/generate-config.py and feed it to the
-# continuation orb. All jobs (lint, per-domain tests, integration,
-# production-checks, sync, deploy) live in the dynamic config.
-#
-# Why a generator: the team wants per-domain parallel test jobs so a
-# slow domain can't gate the rest of the suite. CircleCI's matrix
-# syntax can't introspect folders on disk; a Python emitter can.
+install_deps: &install_deps
+  run:
+    name: Install dependencies
+    command: pip install --quiet poetry && poetry install --no-interaction
 
+save_cache: &save_cache
+  save_cache:
+    key: v2-deps-{{ checksum "poetry.lock" }}
+    paths:
+      - /root/.cache/pypoetry/virtualenvs
+
+setup_steps: &setup_steps
+  - checkout
+  - *restore_cache
+  - *install_deps
+  - *save_cache
+
+single_image: &single_image
+  - image: docker.io/danielspeixoto/databricks
+
+docker_images: &docker_images
+  - image: docker.io/danielspeixoto/databricks
+  - image: mongo:7
+  - image: postgres:16
+    environment:
+      POSTGRES_DB: analytics
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+
+# ── Jobs ───────────────────────────────────────────────────────────────────
 jobs:
-  setup:
-    docker:
-      - image: docker.io/danielspeixoto/databricks
+
+  lint-and-type-check:
+    docker: *single_image
+    resource_class: medium
     steps:
       - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
       - run:
-          name: Install jq (continuation/continue requires it) + pyyaml (generator)
-          command: |
-            if ! command -v jq >/dev/null 2>&1; then
-              apt-get update -qq && apt-get install -y -qq jq
-            fi
-            pip install --quiet pyyaml
+          name: Ruff lint
+          command: poetry run ruff check .
       - run:
-          name: Generate dynamic config from tables/* domains
-          command: |
-            python .circleci/generate-config.py > /tmp/dynamic_config.yml
-            echo "--- generated config (head) ---"
-            head -80 /tmp/dynamic_config.yml
-      - continuation/continue:
-          configuration_path: /tmp/dynamic_config.yml
+          name: Ruff format check
+          command: poetry run ruff format --check .
+      - run:
+          name: MyPy
+          command: poetry run mypy poorbricks/ utils/ validation/ tests/
 
+  unit-tests:
+    docker: *docker_images
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
+      - run:
+          name: Wait for MongoDB
+          command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
+
+      - run:
+          name: Unit tests (poorbricks + utils + tables + validation)
+          command: >
+            poetry run pytest poorbricks/ utils/ tables/ validation/
+            -n 2 --dist loadgroup
+            -m "not integration and not slow"
+            --junitxml=test-results-unit.xml
+            --tb=short -v
+      - run:
+          name: Architecture validation
+          command: poetry run poorbricks-verify --mode arch
+      - store_test_results:
+          path: test-results-unit.xml
+
+  multi-repo-tests:
+    docker: *docker_images
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
+      - run:
+          name: Multi-repo contract verification scenarios
+          command: >
+            poetry run pytest tests/test_multi_repo.py
+            -o "addopts="
+            --junitxml=test-results-multi-repo.xml
+            --tb=short -v
+      - store_test_results:
+          path: test-results-multi-repo.xml
+
+  build-and-smoke:
+    docker: *docker_images
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
+      - run:
+          name: Wait for MongoDB
+          command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
+      - run:
+          name: Wheel-install boundary smoke test
+          command: >
+            poetry run pytest tests/test_wheel_install_boundary.py
+            -m slow -n 0 -v --tb=short
+            --junitxml=test-results-smoke.xml
+          no_output_timeout: 10m
+      - store_test_results:
+          path: test-results-smoke.xml
+      - store_artifacts:
+          path: dist
+          destination: wheel
+
+  integration-tests:
+    docker: *docker_images
+    resource_class: large
+    steps:
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
+      - run:
+          name: Wait for MongoDB and PostgreSQL
+          command: |
+            echo "Waiting for MongoDB on port 27017..."
+            for i in {1..30}; do
+              timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break
+              sleep 1
+            done
+            echo "Waiting for PostgreSQL on port 5432..."
+            for i in {1..30}; do
+              timeout 1 bash -c 'echo > /dev/tcp/localhost/5432' 2>/dev/null && echo "PostgreSQL ready" && break
+              sleep 1
+            done
+      - run:
+          name: Distributed pipeline integration test (bronze → silver → gold)
+          command: >
+            poetry run pytest tests/test_distributed_pipeline.py
+            -m integration -n 0 -v --tb=short
+            --junitxml=test-results-integration.xml
+          no_output_timeout: 30m
+      - store_test_results:
+          path: test-results-integration.xml
+
+# ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
-  setup:
+  test:
+    when:
+      not:
+        equal: [main, << pipeline.git.branch >>]
     jobs:
-      - setup
+      - lint-and-type-check
+      - unit-tests
+      - multi-repo-tests
+      - build-and-smoke
+      - integration-tests:
+          requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
+
+  deploy:
+    when:
+      equal: [main, << pipeline.git.branch >>]
+    jobs:
+      - lint-and-type-check
+      - unit-tests:
+          requires: [lint-and-type-check]
+      - multi-repo-tests:
+          requires: [lint-and-type-check]
+      - build-and-smoke:
+          requires: [lint-and-type-check]
+      - integration-tests:
+          requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]

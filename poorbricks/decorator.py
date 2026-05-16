@@ -62,14 +62,14 @@ def pipeline(
     """Decorator that registers a poorbricks pipeline.
 
     Args:
-        name: Output table name. For ``storage="delta"`` stores in Delta tables.
-            For ``storage="postgres"`` stores in PostgreSQL.
+        name: Output table name.
         model: ValidatedStruct describing the output schema.
         level: One of ``"bronze"``, ``"silver"``, ``"gold"``. For Postgres
             pipelines this also names the destination Postgres schema.
         comment: Short human-readable description of the table.
-        storage: ``"delta"`` (default) or ``"postgres"``. Determines where
-            the table is materialized and how the runner executes the pipeline.
+        storage: ``"delta"`` (Spark memory, test/fixture mode) or ``"postgres"``
+            (materialized via PostgresLoader). Determines where the table is
+            written and how the runner executes the pipeline.
 
     The decorated function must take exactly one parameter, typed as a
     subclass of ``.Inputs``. The body should call ``transform.compute(inputs)``
@@ -93,7 +93,7 @@ def pipeline(
             PipelineMeta(
                 table_name=name,
                 original_fn=fn,
-                dlt_fn=verified,
+                validated_fn=verified,
                 inputs_cls=inputs_cls,
                 model=model,
                 level=level,

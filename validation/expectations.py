@@ -1,4 +1,4 @@
-"""Production-aware contract for one Delta table.
+"""Production-aware contract for one pipeline table.
 
 Where ``ValidatedStruct`` enforces *type-level* shape (Pydantic) and
 ``ValidationRule``\\ s enforce *fixture-level* invariants (per-row regex,
@@ -31,8 +31,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-# Databricks Serverless still ships Python 3.10; ``datetime.UTC`` was
-# added in 3.11. Provide a 3.10-compatible alias.
+# datetime.UTC was added in Python 3.11; keep the alias for 3.10 compat.
 UTC = UTC
 
 if TYPE_CHECKING:

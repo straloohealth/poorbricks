@@ -1,4 +1,4 @@
-"""Transform: silver.dim_patient (Delta) -> gold.patients.
+"""Transform: silver.dim_patient -> gold.patients.
 
 Projects the silver patient dimension into the column set overseer
 consumes. ``create_dataframe`` realigns to ``Patients.to_struct()`` so

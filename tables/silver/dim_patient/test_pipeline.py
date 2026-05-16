@@ -25,24 +25,28 @@ class TestDimPatientTransform:
         result = compute(smoke()).collect()
         assert len(result) == 3
         ids = {r["patient_id"] for r in result}
-        assert ids == {"p1", "p2", "p3"}
+        assert ids == {
+            "507f1f77bcf86cd799439011",
+            "507f1f77bcf86cd799439012",
+            "507f1f77bcf86cd799439013",
+        }
         by_id = {r["patient_id"]: r for r in result}
-        # external_id is mapped to mongo_id (legacy ObjectId analog).
-        assert by_id["p1"]["mongo_id"] == "mongo-p1"
-        # origin → origin_slug for p3 (set to 'ge' in the fixture).
-        assert by_id["p3"]["origin_slug"] == "ge"
-        # is_active reflects bronze.active for the inactive patient.
-        assert by_id["p2"]["is_active"] is False
-        # name/email/phone are null-padded until bronze grows those columns.
-        assert by_id["p1"]["name"] is None
+        assert (
+            by_id["507f1f77bcf86cd799439011"]["mongo_id"] == "507f1f77bcf86cd799439011"
+        )
+        assert by_id["507f1f77bcf86cd799439013"]["origin_slug"] == "ge"
+        assert by_id["507f1f77bcf86cd799439012"]["is_active"] is False
+        assert by_id["507f1f77bcf86cd799439011"]["name"] == "Test Patient"
 
     @pytest.mark.spark
     def test_duplicate_patient_id_keeps_latest(self, spark: SparkSession) -> None:
+        from datetime import datetime
+
         result = compute(duplicate_patient_id()).collect()
         assert len(result) == 1
-        assert result[0]["patient_id"] == "p1"
-        # Latest row wins on the external_id → mongo_id mapping.
-        assert result[0]["mongo_id"] == "mongo-p1-new"
+        assert result[0]["patient_id"] == "507f1f77bcf86cd799439011"
+        # Latest row wins — created_at must be from the newer fixture row.
+        assert result[0]["created_at"] == datetime(2026, 1, 15, 12, 0, 0)
 
     @pytest.mark.spark
     def test_output_columns_match_dim_patient_schema(self, spark: SparkSession) -> None:

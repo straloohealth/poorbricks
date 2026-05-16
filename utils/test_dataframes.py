@@ -236,10 +236,9 @@ class TestSchemaMismatchIssues:
 
         if mismatch_exists:
             print("\n⚠️  SCHEMA MISMATCH DETECTED!")
-            print("This is the same issue you're seeing in Databricks:")
+            print("Schema mismatch:")
             print("- Declared schema expects LongType")
             print("- Inferred schema from data uses IntegerType for small values")
-            print("- This causes Delta table merge failures")
 
         # Try to create a DataFrame with the declared schema - this should work
         try:
@@ -258,36 +257,32 @@ class TestRenameColumns:
     """Test cases for the rename_columns function from dataframes module"""
 
     def test_rename_columns(self, spark: SparkSession) -> None:
-        """Test rename_columns function with camelCase conversion"""
+        """Custom mapping wins; remaining camelCase columns get snake-cased."""
         test_data = [("1", "John", "2023-01-01", "user123")]
         df = spark.createDataFrame(test_data, ["id", "name", "createdAt", "userId"])
 
         result_df = rename_columns(df, {"name": "full_name"})
         columns = result_df.columns
 
-        # Custom mapping
         assert "full_name" in columns
         assert "name" not in columns
-        # Automatic camelCase to snake_case conversion
         assert "created_at" in columns
         assert "createdAt" not in columns
-        assert "patient_id" in columns
+        assert "user_id" in columns
         assert "userId" not in columns
 
     def test_rename_columns_empty_custom_mapping(self, spark: SparkSession) -> None:
-        """Test rename_columns function with only automatic camelCase conversion"""
+        """Only automatic camelCase to snake_case conversion."""
         test_data = [("1", "John", "2023-01-01", "user123")]
         df = spark.createDataFrame(test_data, ["id", "name", "createdAt", "userId"])
 
         result_df = rename_columns(df)
         columns = result_df.columns
 
-        # Only automatic camelCase to snake_case conversion
-        assert "name" in columns  # name stays as is (not in camelCase mapping)
+        assert "name" in columns
         assert "created_at" in columns
         assert "createdAt" not in columns
-        assert "patient_id" in columns
-        assert "user_id" not in columns
+        assert "user_id" in columns
         assert "userId" not in columns
 
 

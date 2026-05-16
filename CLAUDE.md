@@ -28,23 +28,34 @@ poetry run mypy
 poetry run ruff check .
 poetry run ruff format .
 
-# Pre-commit (run before every commit)
+# Pre-commit hooks (run automatically on git commit)
+# First-time setup:
+poetry run pre-commit install
+
+# Manual run (before committing):
 poetry run pre-commit run --all-files
 
 # Start local services (MongoDB, PostgreSQL)
 docker-compose up -d
 
 # Run a pipeline locally against fixture data
-poetry run python -m framework.runner --pipeline delta:smith_users --mode fixtures
+poetry run python -m poorbricks.runner --pipeline delta:smith_users --mode fixtures
 
-# Export silver tables to PostgreSQL (fixtures mode)
-poetry run python scripts/postgres_export.py --mode fixtures
+# Compute all pipelines, write to PostgreSQL, and push contracts (fixtures mode)
+poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v
 
 # Discover registered pipelines
-poetry run python -c "from framework import discover_all_pipelines, list_pipelines; discover_all_pipelines(); print(list_pipelines())"
+poetry run python -c "from poorbricks import discover_all_pipelines, list_pipelines; discover_all_pipelines(); print(list_pipelines())"
 
-# Validate pipeline directory structure
-poetry run python scripts/check_pipeline_structure.py
+# Validate a pipeline's architecture and upstream contracts without computing
+poetry run python -c "
+from poorbricks import run
+result = run('postgres:dim_patient', mode='validate')
+print(result.errors or ['OK'])
+"
+
+# Browse contracts + run tests in the Streamlit UI
+poetry run streamlit run streamlit_app/app.py
 ```
 
 ## Architecture
@@ -59,11 +70,11 @@ Deployment: Local Spark + local MongoDB + local PostgreSQL. No Databricks, no DL
 ### Module Map
 
 ```
-framework/       Core pipeline system (decorator, registry, runner, faults, snapshot)
+poorbricks/      Core pipeline system (decorator, registry, runner, persist, arch)
 validation/      Schema validation (ValidatedStruct, Expectations, rules)
 tables/          Pipeline implementations (bronze/smith/, silver/)
 utils/           MongoDB reader, PostgreSQL writer, Spark helpers, utilities
-scripts/         CLI tools (postgres_export.py, check_pipeline_structure.py)
+tests/           Integration tests (multi-repo, distributed pipeline, wheel install)
 docker-compose.yml  Local services: MongoDB 7, PostgreSQL 16
 ```
 
@@ -140,7 +151,7 @@ The `ContractSource` dynamically fetches schema + example rows from `poorbricks_
 ### Storage Targets
 
 - `@pipeline(..., storage="delta")` — writes to Spark memory (test/fixture mode only)
-- `@pipeline(..., storage="postgres")` — marked for PostgreSQL export via `scripts/postgres_export.py`
+- `@pipeline(..., storage="postgres")` — writes to PostgreSQL via `run_and_persist()`
 
 ### Runner Modes
 
@@ -167,9 +178,9 @@ Start PostgreSQL and MongoDB:
 docker-compose up -d
 ```
 
-Export silver tables to PostgreSQL (fixtures mode):
+Compute and persist all pipelines to PostgreSQL + MongoDB (fixtures mode):
 ```bash
-poetry run python scripts/postgres_export.py --mode fixtures
+poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v
 ```
 
 Query PostgreSQL directly:

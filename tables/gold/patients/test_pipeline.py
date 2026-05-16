@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pyspark.sql import SparkSession
 
@@ -9,6 +11,22 @@ from tables.gold.patients.config import Patients
 from tables.gold.patients.fixtures import smoke
 from tables.gold.patients.pipeline import PatientsGoldInputs
 from tables.gold.patients.transform import compute
+from tables.silver.dim_patient.config import DimPatient
+
+
+@pytest.fixture(autouse=True)
+def _mock_dim_patient_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid hitting the contracts store: serve dim_patient's schema locally."""
+    import utils.contracts as contracts_module
+
+    contract = {"schema_json": DimPatient.to_struct().jsonValue()}
+
+    def fake_fetch(table_name: str) -> dict[str, Any]:
+        if table_name != "dim_patient":
+            raise KeyError(table_name)
+        return contract
+
+    monkeypatch.setattr(contracts_module, "fetch_contract", fake_fetch)
 
 
 class TestPatientsGoldTransform:

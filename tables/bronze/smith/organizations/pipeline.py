@@ -1,7 +1,6 @@
 """Wiring for analytics.bronze.smith_organizations (Postgres-target bronze).
 
-Reads directly from MongoDB (``mongo_smith.organizations``) — no
-Fivetran→Delta mirror exists in poorbricks_dev for this collection.
+Reads directly from MongoDB (``mongo_smith.organizations``).
 """
 
 from __future__ import annotations

@@ -1,7 +1,6 @@
 """Wiring for analytics.bronze.smith_tags.
 
-Reads directly from MongoDB (``smith.tags``) — no Fivetran→Delta
-mirror exists in poorbricks_dev for this collection. Bronze is shape-only;
+Reads directly from MongoDB (``smith.tags``). Bronze is shape-only;
 silver builds dim_tag on top.
 """
 

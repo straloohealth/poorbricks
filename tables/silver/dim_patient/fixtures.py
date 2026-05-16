@@ -33,7 +33,9 @@ def _user(
 ) -> dict:
     return {
         "mongo_id": mongo_id,
-        "externalId": external_id if external_id is not None else f"mongo-{mongo_id[-4:]}",
+        "externalId": external_id
+        if external_id is not None
+        else f"mongo-{mongo_id[-4:]}",
         "name": "Test Patient",
         "email": None,
         "phone": None,

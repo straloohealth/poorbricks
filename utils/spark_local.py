@@ -18,12 +18,11 @@ from pyspark.sql import SparkSession
 def _ensure_pyspark_env() -> None:
     """Set PYSPARK_PYTHON / SPARK_HOME if not already pointing somewhere valid.
 
-    The CI Docker image (``danielspeixoto/databricks``) pre-sets these to
-    Databricks runtime paths that are incompatible with the open-source
-    PySpark installed in our poetry venv. Without this, JVM startup fails
-    with ``'JavaPackage' object is not callable``. ``conftest.py`` does the
-    same fixup in ``pytest_sessionstart``; we duplicate it here so the
-    verify CLI works standalone (no pytest in the loop)."""
+    The CI Docker image pre-sets these to paths that are incompatible with
+    the open-source PySpark installed in our poetry venv. Without this, JVM
+    startup fails with ``'JavaPackage' object is not callable``.
+    ``conftest.py`` does the same fixup in ``pytest_sessionstart``; we
+    duplicate it here so the verify CLI works standalone (no pytest in the loop)."""
     python_executable = sys.executable or "python"
     os.environ["PYSPARK_PYTHON"] = python_executable
     os.environ["PYSPARK_DRIVER_PYTHON"] = python_executable

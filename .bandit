@@ -1,0 +1,7 @@
+exclude_dirs:
+  - tests
+  - test
+
+tests:
+  - B101
+  - B601

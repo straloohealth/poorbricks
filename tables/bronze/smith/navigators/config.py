@@ -11,7 +11,6 @@ from pydantic import Field
 
 from validation import (
     Expectations,
-    NotNullRule,
     StringLengthRule,
     ValidatedStruct,
     ValidationRule,
@@ -29,7 +28,7 @@ class SmithNavigatorBronze(ValidatedStruct):
 
     navigator_id: str | None = Field(
         default=None,
-        description="Unique navigator identifier (Mongo ObjectId from mongo_smith.navigators)."
+        description="Unique navigator identifier (Mongo ObjectId from mongo_smith.navigators).",
     )
     name: str | None = Field(description="Full name of the navigator.")
     role: str | None = Field(
