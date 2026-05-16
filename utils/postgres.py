@@ -27,17 +27,19 @@ class PostgresLoader:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 5432,
-        db: str = "analytics",
-        user: str = "analytics",
-        password: str = "analytics",
+        host: str | None = None,
+        port: int | None = None,
+        db: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
     ) -> None:
-        self.host = host
-        self.port = port
-        self.db = db
-        self.user = user
-        self.password = password
+        from poorbricks.settings import settings
+
+        self.host = host or settings.postgres_host
+        self.port = port or settings.postgres_port
+        self.db = db or settings.postgres_db
+        self.user = user or settings.postgres_user
+        self.password = password or settings.postgres_password
 
     def _connect(self) -> psycopg2.extensions.connection:
         return psycopg2.connect(

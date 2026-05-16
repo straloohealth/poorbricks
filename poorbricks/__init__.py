@@ -26,6 +26,7 @@ from .inputs import (
     PostgresTableSource,
     TableSource,
 )
+from .persist import run_and_persist
 from .registry import (
     get_pipeline,
     list_pipelines,
@@ -45,5 +46,6 @@ __all__ = [
     "list_pipelines",
     "list_scenarios",
     "pipeline",
+    "run_and_persist",
     "scenario",
 ]

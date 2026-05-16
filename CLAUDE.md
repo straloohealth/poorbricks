@@ -39,19 +39,20 @@ poetry run pre-commit run --all-files
 docker-compose up -d
 
 # Run a pipeline locally against fixture data
-poetry run python -m framework.runner --pipeline delta:smith_users --mode fixtures
+poetry run python -m poorbricks.runner --pipeline delta:smith_users --mode fixtures
 
-# Export silver tables to PostgreSQL (fixtures mode)
-poetry run python scripts/postgres_export.py --mode fixtures
+# Compute all pipelines, write to PostgreSQL, and push contracts (fixtures mode)
+poetry run python scripts/test_distributed_pipeline.py
 
 # Discover registered pipelines
-poetry run python -c "from framework import discover_all_pipelines, list_pipelines; discover_all_pipelines(); print(list_pipelines())"
+poetry run python -c "from poorbricks import discover_all_pipelines, list_pipelines; discover_all_pipelines(); print(list_pipelines())"
 
-# Validate pipeline directory structure
-poetry run python scripts/check_pipeline_structure.py
-
-# Push every pipeline's full contract (fields, expectations, inputs, fixtures, profile)
-poetry run python scripts/push_contract.py --all
+# Validate a pipeline's architecture and upstream contracts without computing
+poetry run python -c "
+from poorbricks import run
+result = run('postgres:dim_patient', mode='validate')
+print(result.errors or ['OK'])
+"
 
 # Browse contracts + run tests in the Streamlit UI
 poetry run streamlit run streamlit_app/app.py
@@ -69,11 +70,11 @@ Deployment: Local Spark + local MongoDB + local PostgreSQL. No Databricks, no DL
 ### Module Map
 
 ```
-framework/       Core pipeline system (decorator, registry, runner, faults, snapshot)
+poorbricks/      Core pipeline system (decorator, registry, runner, persist, arch)
 validation/      Schema validation (ValidatedStruct, Expectations, rules)
 tables/          Pipeline implementations (bronze/smith/, silver/)
 utils/           MongoDB reader, PostgreSQL writer, Spark helpers, utilities
-scripts/         CLI tools (postgres_export.py, check_pipeline_structure.py)
+scripts/         CLI tools (test_distributed_pipeline.py)
 docker-compose.yml  Local services: MongoDB 7, PostgreSQL 16
 ```
 

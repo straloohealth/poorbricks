@@ -16,9 +16,11 @@ human-readable issues — validation failures, missing contracts, etc.).
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from .faults import apply_fault
@@ -216,6 +218,53 @@ def _load_dotenv() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Architecture and contract validation
+# ---------------------------------------------------------------------------
+
+
+def _pipeline_dir_from_meta(meta: PipelineMeta) -> Path:
+    """Safely derive pipeline directory from module path using importlib."""
+    spec = importlib.util.find_spec(meta.module)
+    if spec is None or spec.origin is None:
+        raise RuntimeError(f"Cannot locate module {meta.module!r} on disk")
+    return Path(spec.origin).parent
+
+
+def _check_arch(meta: PipelineMeta) -> list[str]:
+    """Run architecture checks on a pipeline's directory."""
+    from .arch import check_pipeline_dir
+
+    errors = check_pipeline_dir(_pipeline_dir_from_meta(meta))
+    return [e.format() for e in errors]
+
+
+def _validate_contract_sources(inputs_cls: type[Inputs]) -> list[str]:
+    """Verify all ContractSource upstreams exist in MongoDB."""
+    from utils.contracts import fetch_contract
+
+    errors: list[str] = []
+    for field_name, spec in inputs_cls.sources().items():
+        if isinstance(spec, ContractSource):
+            if fetch_contract(spec.table_name) is None:
+                errors.append(
+                    f"ContractSource '{spec.table_name}' (field '{field_name}') "
+                    f"not found in MongoDB — run upstream pipeline first"
+                )
+    return errors
+
+
+def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
+    """Compute and verify a pipeline's output against its schema."""
+    df = cast("DataFrame", meta.original_fn(inputs))
+    errors: list[str] = []
+    try:
+        meta.model.verify(df, strict=True)  # type: ignore[attr-defined]
+    except Exception as exc:
+        errors.append(str(exc))
+    return RunResult(df=df, rows=df.count(), errors=errors)
+
+
+# ---------------------------------------------------------------------------
 # Raw pipeline execution (internal)
 # ---------------------------------------------------------------------------
 
@@ -239,14 +288,7 @@ def _run_raw(
     else:
         raise ValueError(f"Internal _run_raw does not support mode {mode!r}.")
 
-    df = cast("DataFrame", meta.original_fn(inputs))
-    contract_errors: list[str] = []
-    try:
-        meta.model.verify(df, strict=True)  # type: ignore[attr-defined]
-    except Exception as exc:
-        contract_errors.append(str(exc))
-
-    return RunResult(df=df, rows=None, errors=contract_errors)
+    return _execute_pipeline(meta, inputs)
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +301,7 @@ def run(
     mode: str = "fixtures",
     scenario_name: str | None = None,
     fault_name: str | None = None,
+    skip_checks: bool = False,
 ) -> RunResult:
     """Run a pipeline locally and return ``RunResult``.
 
@@ -266,14 +309,16 @@ def run(
         pipeline_key: pipeline table name or dotted path (e.g. ``"smith.users"`` or
             ``"silver.dim_patient"``). Can also be a registry key like
             ``"delta:smith_users"``.
-        mode: one of ``"fixtures"``, ``"scenario"``, ``"production"``, ``"fault"``.
+        mode: one of ``"fixtures"``, ``"scenario"``, ``"production"``, ``"fault"``,
+            ``"validate"``. ``"validate"`` runs checks without computing.
         scenario_name: required when ``mode="scenario"``.
         fault_name: required when ``mode="fault"``.
+        skip_checks: if True, skip architecture and contract-source validation.
 
     Returns:
         ``RunResult(df, rows, errors)``.
     """
-    valid_modes = {"fixtures", "scenario", "production", "fault"}
+    valid_modes = {"fixtures", "scenario", "production", "fault", "validate"}
     if mode not in valid_modes:
         raise ValueError(f"Unknown mode {mode!r}. Valid: {sorted(valid_modes)}.")
 
@@ -281,6 +326,28 @@ def run(
     _import_pipeline_module(pipeline_key)
     meta = _resolve_meta(pipeline_key)
     inputs_cls = meta.inputs_cls
+
+    # Run architecture and contract-source checks unless skipped
+    if not skip_checks:
+        arch_errors = _check_arch(meta)
+        contract_errors = _validate_contract_sources(inputs_cls)
+        all_errors = arch_errors + contract_errors
+
+        # If validate-only mode, return errors without computing
+        if mode == "validate":
+            return RunResult(df=None, rows=None, errors=all_errors)
+
+        # If any errors found, raise before touching Spark
+        if all_errors:
+            error_msg = "Pipeline checks failed:\n" + "\n".join(
+                f"  {e}" for e in all_errors
+            )
+            raise RuntimeError(error_msg)
+    elif mode == "validate":
+        # skip_checks=True with mode=validate is a no-op
+        return RunResult(df=None, rows=None, errors=[])
+
+    # Build inputs based on mode
     mongo_uri = os.getenv("MONGO_URI")
     spark = _ensure_local_spark()
     cache: dict[str, DataFrame] = {}
@@ -303,14 +370,7 @@ def run(
     else:
         raise AssertionError(f"unhandled mode {mode!r}")
 
-    df = cast("DataFrame", meta.original_fn(inputs))
-    contract_errors: list[str] = []
-    try:
-        meta.model.verify(df, strict=True)  # type: ignore[attr-defined]
-    except Exception as exc:
-        contract_errors.append(str(exc))
-
-    return RunResult(df=df, rows=None, errors=contract_errors)
+    return _execute_pipeline(meta, inputs)
 
 
 __all__ = ["RunResult", "run"]

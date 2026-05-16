@@ -80,7 +80,14 @@ def _resolve_tables_root(tables_root: Path | None) -> Path:
     env = os.environ.get("TABLES_ROOT")
     if env:
         return Path(env)
-    return Path.cwd() / "tables"
+    from .settings import settings
+
+    return settings.tables_root
+
+
+def check_pipeline_dir(pipeline_dir: Path) -> list[ArchError]:
+    """Run all architecture checks on a single pipeline directory."""
+    return _check_pipeline_dir(pipeline_dir, pipeline_dir.as_posix())
 
 
 def _check_pipeline_dir(pipeline_dir: Path, rel: str) -> list[ArchError]:
@@ -208,4 +215,4 @@ def _read_class_attr_value(path: Path, base_name: str, attr_name: str) -> Any:
     return None
 
 
-__all__ = ["ArchError", "check_architecture"]
+__all__ = ["ArchError", "check_architecture", "check_pipeline_dir"]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
 
@@ -16,6 +18,7 @@ class Settings(BaseSettings):
     contracts_db: str = "poorbricks_contracts"
     contracts_collection: str = "data_contracts"
     delta_output_dir: str = "artifacts/delta"
+    tables_root: Path = Path("tables")
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "analytics"
