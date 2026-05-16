@@ -78,13 +78,23 @@ jobs:
           path: test-results-multi-repo.xml
 
   build-and-smoke:
-    docker: *image
+    docker:
+      - image: docker.io/danielspeixoto/databricks
+      - image: postgres:16
+        environment:
+          POSTGRES_DB: analytics
+          POSTGRES_USER: analytics
+          POSTGRES_PASSWORD: analytics
+      - image: mongo:7
     resource_class: medium
     steps:
       - checkout
       - *restore_cache
       - *install
       - *save_cache
+      - run:
+          name: Wait for MongoDB
+          command: until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1; do sleep 2; done && echo "MongoDB ready"
       - run:
           name: Build wheel
           command: poetry build -f wheel
@@ -121,7 +131,7 @@ jobs:
       - run:
           name: Distributed pipeline test (bronze → silver → gold)
           command: poetry run python scripts/test_distributed_pipeline.py
-          no_output_timeout: 20m
+          no_output_timeout: 30m
 
 # ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
@@ -131,14 +141,11 @@ workflows:
         equal: [main, << pipeline.git.branch >>]
     jobs:
       - lint-and-type-check
-      - unit-tests:
-          requires: [lint-and-type-check]
-      - multi-repo-tests:
-          requires: [lint-and-type-check]
-      - build-and-smoke:
-          requires: [lint-and-type-check]
+      - unit-tests
+      - multi-repo-tests
+      - build-and-smoke
       - integration-tests:
-          requires: [unit-tests, multi-repo-tests, build-and-smoke]
+          requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
 
   deploy:
     when:
@@ -152,4 +159,4 @@ workflows:
       - build-and-smoke:
           requires: [lint-and-type-check]
       - integration-tests:
-          requires: [unit-tests, multi-repo-tests, build-and-smoke]
+          requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]

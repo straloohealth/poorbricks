@@ -24,7 +24,7 @@ class TestSmithNavigatorsBronzeTransform:
         rows = result.collect()
         assert len(rows) == 1
         row = rows[0]
-        assert row["navigator_id"] == "navigator-1"
+        assert row["navigator_id"] == "507f1f77bcf86cd799439012"
         assert row["email"] == "maria.silva@straloo.com.br"
         expected_columns = {f.name for f in SmithNavigatorBronze.to_struct().fields}
         assert set(result.columns) == expected_columns

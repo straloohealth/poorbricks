@@ -69,12 +69,16 @@ def main() -> int:
         print(f"exit code: {result.returncode}")
 
     if result.returncode == 0:
-        print("\nNOTE: verify exited 0 — expected at least the missing_contract failure.")
+        print(
+            "\nNOTE: verify exited 0 — expected at least the missing_contract failure."
+        )
     else:
         if "missing_contract" not in result.stdout:
             print("ERROR: expected missing_contract failure in output", file=sys.stderr)
             return 1
-        print("\n✓ simulation passed — CLI ran from installed wheel and reported expected failure")
+        print(
+            "\n✓ simulation passed — CLI ran from installed wheel and reported expected failure"
+        )
     return 0
 
 

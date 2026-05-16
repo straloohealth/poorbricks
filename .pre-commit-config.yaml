@@ -42,3 +42,13 @@ repos:
       - id: bandit
         args: [-c, .bandit]
         exclude: ^tests/
+
+  # Unit tests — mirrors the CI unit-tests job
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: Unit tests
+        entry: .venv/bin/python -m pytest tables/ -n 2 --dist loadgroup -m "not integration" --tb=short -q
+        language: system
+        pass_filenames: false
+        always_run: true

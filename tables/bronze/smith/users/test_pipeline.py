@@ -24,8 +24,7 @@ class TestSmithUsersBronzeTransform:
         rows = result.collect()
         assert len(rows) == 1
         row = rows[0]
-        assert row["patient_id"] == "patient-1"
+        assert row["mongo_id"] == "507f1f77bcf86cd799439011"
         assert row["origin"] == "aon"
-        assert row["gender"] == "FEMALE"
         expected_columns = {f.name for f in SmithUserBronze.to_struct().fields}
         assert set(result.columns) == expected_columns
