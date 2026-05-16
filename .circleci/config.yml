@@ -57,6 +57,10 @@ jobs:
     steps:
       - *setup
       - run:
+          name: Wait for MongoDB
+          command: until mongosh --quiet --eval 'db.adminCommand("ping")' >/dev/null 2>&1; do sleep 2; done && echo "MongoDB ready"
+  
+      - run:
           name: Unit tests (all levels, fixtures mode)
           command: >
             poetry run pytest tables/
