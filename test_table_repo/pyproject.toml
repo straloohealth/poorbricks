@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "test-table-repo"
+version = "0.1.0"
+description = "Integration test fixture for the poorbricks two-repo model"
+authors = ["Daniel Speixoto"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+poorbricks-framework = { path = "..", develop = true }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

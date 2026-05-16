@@ -1,0 +1,15 @@
+# Workflow stub — schema settled for future Airflow integration.
+# Not consumed yet by any orchestrator; lives here so the YAML format is
+# established and stable for when the DAG generator lands.
+name: test_workflow
+schedule: "0 * * * *"
+# image: optional — defaults to docker.io/danielspeixoto/databricks
+
+tasks:
+  - id: happy_path
+    pipeline: postgres:happy_path
+
+  - id: gold_patients
+    pipeline: postgres:gold_patients
+    depends_on:
+      - happy_path

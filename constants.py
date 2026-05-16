@@ -1,3 +1,6 @@
+DEFAULT_WORKER_IMAGE = "docker.io/danielspeixoto/databricks"
+
+
 class DatabricksSecrets:
     scope: str
     key: str

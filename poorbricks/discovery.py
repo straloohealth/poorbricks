@@ -1,7 +1,13 @@
 """Import every framework-registered pipeline to populate the registry.
 
-This traverses tables/**/pipeline.py and imports each module that imports
-from poorbricks, which triggers @pipeline decorators to register themselves.
+This traverses ``<tables_root>/**/pipeline.py`` and imports each module that
+imports from ``poorbricks``, which triggers ``@pipeline`` decorators to
+register themselves.
+
+Tables root resolution order:
+1. Explicit ``tables_root`` argument to ``discover_all_pipelines``
+2. ``TABLES_ROOT`` environment variable
+3. ``CWD/tables/`` (default — works in any repo using ``poorbricks`` as a lib)
 
 Safe to call multiple times (idempotent).
 """
@@ -9,23 +15,36 @@ Safe to call multiple times (idempotent).
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINES_ROOT = REPO_ROOT / "tables"
+
+def _resolve_roots(override: Path | None) -> tuple[Path, Path]:
+    """Resolve (repo_root, pipelines_root) per the documented precedence."""
+    if override is not None:
+        tables_root = Path(override).resolve()
+        return tables_root.parent, tables_root
+    env = os.environ.get("TABLES_ROOT")
+    if env:
+        tables_root = Path(env).resolve()
+        return tables_root.parent, tables_root
+    cwd = Path.cwd().resolve()
+    return cwd, cwd / "tables"
 
 
-def discover_all_pipelines() -> None:
-    """Import every pipeline.py that uses `from poorbricks`.
+def discover_all_pipelines(tables_root: Path | None = None) -> None:
+    """Import every pipeline.py that uses ``from poorbricks``.
 
-    Populates the pipeline registry so all_pipelines() and list_pipelines()
-    return results.
+    Populates the pipeline registry so ``all_pipelines()`` and
+    ``list_pipelines()`` return results.
     """
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
+    repo_root, pipelines_root = _resolve_roots(tables_root)
 
-    for pipeline_path in sorted(PIPELINES_ROOT.rglob("pipeline.py")):
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    for pipeline_path in sorted(pipelines_root.rglob("pipeline.py")):
         if "__pycache__" in pipeline_path.parts:
             continue
 
@@ -33,7 +52,7 @@ def discover_all_pipelines() -> None:
         if "from poorbricks" not in text:
             continue
 
-        rel = pipeline_path.relative_to(REPO_ROOT)
+        rel = pipeline_path.relative_to(repo_root)
         module_path = ".".join(rel.with_suffix("").parts)
 
         try:
@@ -48,6 +67,10 @@ def discover_all_pipelines() -> None:
                 f"[discover] WARN: failed to import {module_path}: {exc}",
                 file=sys.stderr,
             )
+
+
+# Back-compat constants — resolved at import time from the default precedence.
+REPO_ROOT, PIPELINES_ROOT = _resolve_roots(None)
 
 
 __all__ = ["PIPELINES_ROOT", "REPO_ROOT", "discover_all_pipelines"]

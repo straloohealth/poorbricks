@@ -3,10 +3,15 @@ name = "poorbricks-framework"
 version = "0.1.0"
 description = "Local Spark framework for PySpark pipeline development"
 authors = ["Daniel Speixoto"]
-package-mode = false
+packages = [
+    { include = "poorbricks" },
+    { include = "validation" },
+    { include = "utils" },
+]
 
 [tool.poetry.scripts]
 generate-fields = "scripts.generate_fields:main"
+poorbricks-verify = "poorbricks.verify:main"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
@@ -46,6 +51,7 @@ testpaths = ["."]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+norecursedirs = ["test_table_repo", "artifacts", "dist", ".venv"]
 addopts = [
     "-v",
     "-n", "4",
@@ -59,6 +65,7 @@ addopts = [
 markers = [
     "spark: marks tests that require Spark session",
     "integration: marks tests that require MongoDB connection",
+    "xdist_group: pytest-xdist grouping (run on the same worker)",
     "slow: marks tests as slow running"
 ]
 filterwarnings = [
