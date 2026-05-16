@@ -11,12 +11,13 @@ which transitively imports ``pipeline.py`` and (if present) ``fixtures.py``.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from .inputs import Inputs
 
 ScenarioFn = Callable[[], "Inputs"]
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 _pipelines: dict[str, PipelineMeta] = {}
@@ -123,7 +124,7 @@ def list_pipelines() -> list[str]:
     return sorted(_pipelines)
 
 
-def scenario(name: str) -> Callable[[ScenarioFn], ScenarioFn]:
+def scenario(name: str) -> Callable[[_F], _F]:
     """Register a fixture scenario for the calling pipeline.
 
     Scenario functions live in a pipeline's ``fixtures.py`` and return an
@@ -132,7 +133,7 @@ def scenario(name: str) -> Callable[[ScenarioFn], ScenarioFn]:
     ``source.pipelines.X.Y.fixtures`` is associated with pipeline ``X.Y``.
     """
 
-    def decorator(fn: ScenarioFn) -> ScenarioFn:
+    def decorator(fn: _F) -> _F:
         module = fn.__module__
         # Strip the ".fixtures" suffix to get the pipeline module path,
         # then strip the leading "tables." to get the dotted name.
