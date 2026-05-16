@@ -21,7 +21,7 @@ def render() -> str | None:
         if not summaries:
             st.warning(
                 "No contracts found.\n\nRun "
-                "`poetry run python scripts/push_contract.py --all`."
+                "`poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v`."
             )
             return None
 

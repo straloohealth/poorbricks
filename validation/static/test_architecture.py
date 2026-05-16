@@ -1,16 +1,14 @@
 """Architecture gate tests for the framework's own tables/ directory.
 
 Structural and compliance checks (file presence, poorbricks import, @scenario,
-Expectations, UNIQUE_KEYS, no dbutils.secrets) are delegated to
-``poorbricks.arch.check_architecture()`` so they can be reused by downstream
-repos via ``poorbricks-verify --mode arch``.
+Expectations, UNIQUE_KEYS, no dbutils.secrets) live in
+``poorbricks.arch.check_architecture()`` and are exercised in CI via
+``poorbricks-verify --mode arch`` — not duplicated here.
 
-Additional documentation-quality checks (Field(description=...), class
-docstrings) are enforced here — they are specific to this repo's catalog
-requirements.
-
-Legacy-pattern scan: pipelines that still use ``@dlt.table`` are detected and
-reported; all pipelines in this repo must have migrated to ``@pipeline``.
+What this module enforces:
+- Legacy-pattern scan: no pipeline may still use ``@dlt.table``.
+- Documentation quality (catalog-specific): every ``ValidatedStruct`` must
+  have a class docstring and every field must use ``Field(description=...)``.
 """
 
 from __future__ import annotations
@@ -19,8 +17,6 @@ import ast
 from pathlib import Path
 
 import pytest
-
-from poorbricks.arch import check_architecture
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -138,24 +134,6 @@ class TestLegacyArchitecture:
                 )
         if violations:
             pytest.fail("\n".join(violations))
-
-
-# ---------------------------------------------------------------------------
-# Portable architecture check (delegates to poorbricks.arch)
-# ---------------------------------------------------------------------------
-
-
-class TestArchitecture:
-    """Structural and compliance checks on the framework's own tables/.
-
-    The same checks run in downstream repos via ``poorbricks-verify --mode arch``.
-    """
-
-    def test_pipeline_structure_and_compliance(self) -> None:
-        tables_root = _REPO_ROOT / "tables"
-        errors = check_architecture(tables_root=tables_root)
-        if errors:
-            pytest.fail("\n".join(e.format() for e in errors))
 
 
 # ---------------------------------------------------------------------------

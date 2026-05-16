@@ -8,9 +8,9 @@ Browse every pipeline's persisted contract (fields, expectations, inputs,
 fixtures, sample data, profile) and run their transforms against editable
 fixture rows.
 
-The contract documents are produced by `scripts/push_contract.py`; refresh
-them with `poetry run python scripts/push_contract.py --all` whenever a
-pipeline's shape or fixtures change.
+The contract documents are produced by the distributed pipeline test; refresh
+them with `poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v`
+whenever a pipeline's shape or fixtures change.
 """
 
 from __future__ import annotations

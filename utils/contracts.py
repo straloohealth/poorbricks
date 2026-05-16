@@ -36,10 +36,7 @@ def fetch_contract(table_name: str) -> dict[str, Any]:
         {"_id": table_name}
     )
     if doc is None:
-        raise KeyError(
-            f"No contract found for table {table_name!r}. Run: "
-            f"poetry run python scripts/push_contract.py --pipeline {table_name}"
-        )
+        raise KeyError(f"No contract found for table {table_name!r}.")
     return doc  # type: ignore[no-any-return]
 
 

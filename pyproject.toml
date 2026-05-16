@@ -10,7 +10,6 @@ packages = [
 ]
 
 [tool.poetry.scripts]
-generate-fields = "scripts.generate_fields:main"
 poorbricks-verify = "poorbricks.verify:main"
 
 [tool.poetry.dependencies]
@@ -89,9 +88,8 @@ warn_unreachable = true
 strict_equality = true
 show_error_codes = true
 
-# Exclude scripts, CI, artifacts, streamlit, secondary test repo, and test files
+# Exclude CI, artifacts, streamlit, secondary test repo, and test files
 exclude = [
-    "scripts/.*",
     "artifacts/.*",
     "\\.circleci/.*",
     "streamlit_app/.*",
@@ -123,7 +121,7 @@ disallow_untyped_decorators = false
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-exclude = ["artifacts", "scripts", ".circleci", "__pycache__"]
+exclude = ["artifacts", ".circleci", "__pycache__"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP"]

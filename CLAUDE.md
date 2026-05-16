@@ -42,7 +42,7 @@ docker-compose up -d
 poetry run python -m poorbricks.runner --pipeline delta:smith_users --mode fixtures
 
 # Compute all pipelines, write to PostgreSQL, and push contracts (fixtures mode)
-poetry run python scripts/test_distributed_pipeline.py
+poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v
 
 # Discover registered pipelines
 poetry run python -c "from poorbricks import discover_all_pipelines, list_pipelines; discover_all_pipelines(); print(list_pipelines())"
@@ -74,7 +74,7 @@ poorbricks/      Core pipeline system (decorator, registry, runner, persist, arc
 validation/      Schema validation (ValidatedStruct, Expectations, rules)
 tables/          Pipeline implementations (bronze/smith/, silver/)
 utils/           MongoDB reader, PostgreSQL writer, Spark helpers, utilities
-scripts/         CLI tools (test_distributed_pipeline.py)
+tests/           Integration tests (multi-repo, distributed pipeline, wheel install)
 docker-compose.yml  Local services: MongoDB 7, PostgreSQL 16
 ```
 
@@ -151,7 +151,7 @@ The `ContractSource` dynamically fetches schema + example rows from `poorbricks_
 ### Storage Targets
 
 - `@pipeline(..., storage="delta")` — writes to Spark memory (test/fixture mode only)
-- `@pipeline(..., storage="postgres")` — marked for PostgreSQL export via `scripts/postgres_export.py`
+- `@pipeline(..., storage="postgres")` — writes to PostgreSQL via `run_and_persist()`
 
 ### Runner Modes
 
@@ -178,9 +178,9 @@ Start PostgreSQL and MongoDB:
 docker-compose up -d
 ```
 
-Export silver tables to PostgreSQL (fixtures mode):
+Compute and persist all pipelines to PostgreSQL + MongoDB (fixtures mode):
 ```bash
-poetry run python scripts/postgres_export.py --mode fixtures
+poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v
 ```
 
 Query PostgreSQL directly:

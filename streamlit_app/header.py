@@ -48,7 +48,7 @@ def render_empty_state() -> None:
         unsafe_allow_html=True,
     )
     st.code(
-        "poetry run python scripts/push_contract.py --all",
+        "poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v",
         language="bash",
     )
 

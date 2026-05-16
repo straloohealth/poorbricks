@@ -70,11 +70,11 @@ jobs:
           command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
 
       - run:
-          name: Unit tests (tables + validation)
+          name: Unit tests (poorbricks + utils + tables + validation)
           command: >
-            poetry run pytest tables/ validation/
+            poetry run pytest poorbricks/ utils/ tables/ validation/
             -n 2 --dist loadgroup
-            -m "not integration"
+            -m "not integration and not slow"
             --junitxml=test-results-unit.xml
             --tb=short -v
       - run:
@@ -113,12 +113,14 @@ jobs:
           name: Wait for MongoDB
           command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
       - run:
-          name: Build wheel
-          command: poetry build -f wheel
-      - run:
-          name: Simulate isolated table-repo install
-          command: poetry run python scripts/simulate_table_repo.py
+          name: Wheel-install boundary smoke test
+          command: >
+            poetry run pytest tests/test_wheel_install_boundary.py
+            -m slow -n 0 -v --tb=short
+            --junitxml=test-results-smoke.xml
           no_output_timeout: 10m
+      - store_test_results:
+          path: test-results-smoke.xml
       - store_artifacts:
           path: dist
           destination: wheel
@@ -145,9 +147,14 @@ jobs:
               sleep 1
             done
       - run:
-          name: Distributed pipeline test (bronze → silver → gold)
-          command: poetry run python scripts/test_distributed_pipeline.py
+          name: Distributed pipeline integration test (bronze → silver → gold)
+          command: >
+            poetry run pytest tests/test_distributed_pipeline.py
+            -m integration -n 0 -v --tb=short
+            --junitxml=test-results-integration.xml
           no_output_timeout: 30m
+      - store_test_results:
+          path: test-results-integration.xml
 
 # ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
