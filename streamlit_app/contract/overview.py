@@ -33,4 +33,4 @@ def storage(contract: dict[str, Any]) -> None:
             f"Materialized into PostgreSQL as `analytics.{level}.{table_name}`."
         )
     else:
-        st.markdown("`delta` target — kept in Spark memory only (test / fixture mode).")
+        st.markdown("`delta` — Spark memory only (test / fixture mode).")

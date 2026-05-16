@@ -26,3 +26,4 @@ class SchemaDrift(ValidatedStruct):
 
 class SchemaDriftExpectations(Expectations):
     MIN_ROWS = 1
+    UNIQUE_KEYS = [["out"]]

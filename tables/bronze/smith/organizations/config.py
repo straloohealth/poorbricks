@@ -4,8 +4,7 @@ Mirrors the ``smith.organizations`` MongoDB collection — the canonical
 client/account org master used by overseer dashboards and downstream
 silver dimensions (e.g. ``silver.dim_organization``).
 
-No Fivetran→Delta mirror exists in poorbricks_dev for this collection, so
-the bronze pipeline reads MongoDB directly through ``MongoSource``.
+The bronze pipeline reads MongoDB directly through ``MongoSource``.
 """
 
 from datetime import datetime

@@ -387,8 +387,8 @@ class TestSchemaValidationRule:
         """Test that nullability mismatch is intentionally ignored.
 
         Spark marks most output columns as nullable=True regardless of actual
-        data content.  @dlt.table(schema=...) enforces nullability at write
-        time, so SchemaValidationRule skips this check.
+        data content. Nullability is enforced at the storage layer, so
+        SchemaValidationRule skips this check.
         """
         expected_schema = StructType(
             [

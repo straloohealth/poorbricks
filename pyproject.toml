@@ -89,15 +89,16 @@ warn_unreachable = true
 strict_equality = true
 show_error_codes = true
 
-# Exclude scripts, CI, artifacts, and test files with pre-existing violations
+# Exclude scripts, CI, artifacts, streamlit, secondary test repo, and test files
 exclude = [
     "scripts/.*",
     "artifacts/.*",
     "\\.circleci/.*",
-    "source/.*/test_.*\\.py",
-    "source/test_.*\\.py",
-    "poorbricks/test_.*\\.py",
-    "validation/static/test_.*\\.py",
+    "streamlit_app/.*",
+    "test_table_repo/.*",
+    "(^|/)test_.*\\.py$",
+    "(^|/)conftest\\.py$",
+    "(^|/)tests/.*",
 ]
 
 # Per-module options
@@ -110,7 +111,6 @@ module = [
     "pytest",
     "pytest.*",
     "pydantic_settings.*",
-    "databricks.connect"
 ]
 ignore_missing_imports = true
 

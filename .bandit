@@ -1,4 +1,7 @@
-[general]
-# Exclude test directories from security checks
-exclude_dirs = [/tests/,/test/]
-tests = [B101, B601]
+exclude_dirs:
+  - tests
+  - test
+
+tests:
+  - B101
+  - B601

@@ -1,4 +1,4 @@
-"""Declared upstream inputs (mongo / contracts store / delta / postgres)."""
+"""Declared upstream inputs (mongo / contracts store / registered table / postgres)."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _describe(entry: dict[str, Any]) -> dict[str, Any]:
     elif kind == "MongoSource":
         details = f"mongo {entry.get('db')}.{entry.get('collection')}"
     elif kind == "TableSource":
-        details = f"delta {entry.get('table_name')} ({entry.get('model')})"
+        details = f"table {entry.get('table_name')} ({entry.get('model')})"
     elif kind == "PostgresTableSource":
         details = f"postgres {entry.get('schema_name')}.{entry.get('table')}"
     return {"name": entry["name"], "kind": kind, "details": details}

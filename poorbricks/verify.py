@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from poorbricks.arch import ArchError, check_architecture
 from poorbricks.discovery import discover_all_pipelines
 from poorbricks.inputs import ContractSource, TableSource
 from poorbricks.registry import PipelineMeta, all_pipelines
@@ -251,7 +252,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Verify table-repo contracts and expectations"
     )
-    parser.add_argument("--mode", choices=["local", "ci"], required=True)
+    parser.add_argument("--mode", choices=["local", "ci", "arch"], required=True)
     parser.add_argument(
         "--tables-root",
         type=Path,
@@ -274,6 +275,8 @@ def main() -> None:
 
     if args.mode == "local":
         errors: list[Any] = verify_local(tables_root=args.tables_root)
+    elif args.mode == "arch":
+        errors = check_architecture(tables_root=args.tables_root)
     else:
         errors = verify_ci(
             tables_root=args.tables_root,
@@ -297,4 +300,6 @@ __all__ = [
     "main",
     "verify_ci",
     "verify_local",
+    "ArchError",
+    "check_architecture",
 ]

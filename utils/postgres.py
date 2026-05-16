@@ -99,7 +99,7 @@ class PostgresLoader:
 
         Returns row count written.
         """
-        row_count = df.count()
+        row_count: int = df.count()
 
         conn = self._connect()
         try:

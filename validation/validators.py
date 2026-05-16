@@ -113,26 +113,19 @@ def verify_with_model(
     model: type[ValidatedStruct],
     include_automatic_rules: bool = True,
 ) -> Callable[[F], F]:
-    """
-    Decorator that automatically validates DataFrame results using a ValidatedStruct model.
+    """Decorator that automatically validates DataFrame results using a ValidatedStruct model.
 
-    This decorator should be used on DLT table functions to ensure automatic validation
-    of the returned DataFrame against the specified model's validation rules.
-
-    Additionally, this decorator automatically sets the Spark configuration
-    'spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled = true'
-    to allow NOT NULL constraints nested within arrays or maps, which is required
-    for Delta Lake compatibility with ValidatedStruct schemas.
+    Wraps a pipeline function to run schema validation and model rules on the
+    returned DataFrame before it is returned to the caller.
 
     :param model: ValidatedStruct model class to use for validation
     :param include_automatic_rules: If True, includes automatic schema and enum validation.
     :return: Decorator function
 
     Example:
-        @dlt.table(name="messages", schema=Message.to_struct())
-        @verify_with_model(model=Message)
-        def messages_table() -> DataFrame:
-            return _run()
+        @pipeline(name="messages", model=Message, level="silver", comment="...")
+        def messages_table(inputs: MessageInputs) -> DataFrame:
+            return compute(inputs)
     """
 
     def decorator(func: F) -> F:

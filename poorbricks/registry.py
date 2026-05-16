@@ -35,16 +35,16 @@ def all_pipelines() -> dict[str, PipelineMeta]:
 class PipelineMeta:
     """Records a single registered pipeline.
 
-    Holds both the DLT-decorated function (called by Databricks) and the
-    original undecorated function (called by the local runner with an
-    explicit Inputs instance).
+    Holds the original undecorated function (called by the runner with an
+    explicit Inputs instance) and the schema-validated wrapper (used for
+    type-safe invocation in tests).
     """
 
     def __init__(
         self,
         table_name: str,
         original_fn: Callable[..., object],
-        dlt_fn: Callable[..., object],
+        validated_fn: Callable[..., object],
         inputs_cls: type[Inputs],
         model: type,
         level: str,
@@ -54,13 +54,13 @@ class PipelineMeta:
     ) -> None:
         self.table_name = table_name
         self.original_fn = original_fn
-        self.dlt_fn = dlt_fn
+        self.validated_fn = validated_fn
         self.inputs_cls = inputs_cls
         self.model = model
         self.level = level
         self.comment = comment
         self.module = module
-        # "delta" (writes to poorbricks_dev/master via @dlt.table) or
+        # "delta" (Spark memory, test/fixture mode) or
         # "postgres" (writes to analytics.<level>.<name> via PostgresLoader).
         self.target_storage = target_storage
 
@@ -68,10 +68,8 @@ class PipelineMeta:
 def _registry_key(table_name: str, target_storage: str) -> str:
     """Compose a unique registry key.
 
-    Delta and Postgres pipelines can legitimately share the same logical
-    table name (Delta writes to ``poorbricks_dev.master.<name>``; Postgres
-    writes to ``analytics.<level>.<name>`` — different stores, same
-    business meaning). Disambiguate by storage.
+    Delta and Postgres pipelines can share the same logical table name
+    (different stores, same business meaning). Disambiguate by storage.
     """
     return f"{target_storage}:{table_name}"
 
@@ -121,8 +119,7 @@ def get_pipeline(
 
 
 def list_pipelines() -> list[str]:
-    """Return registry keys (storage:table_name) so callers can see both
-    Delta and Postgres pipelines under the same logical name."""
+    """Return registry keys (storage:table_name) for all registered pipelines."""
     return sorted(_pipelines)
 
 

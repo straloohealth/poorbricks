@@ -280,6 +280,5 @@ class SchemaValidationRule(ValidationRule):
 
             # Nullable metadata is intentionally not checked here: Spark marks most
             # output columns as nullable=True regardless of actual data content.
-            # @dlt.table(schema=...) enforces nullability at write time.
 
         return errors

@@ -3,23 +3,21 @@
 Public API:
     @pipeline(name=..., model=..., level=..., comment=...,
               storage="delta" | "postgres")
-        — replaces @dlt.table + @verify_with_model. Default storage is
-          "delta"; pass storage="postgres" to materialize via
-          PostgresLoader into analytics.<level>.<name> instead of a
-          Delta table. Pipelines can stay in either mode independently.
+        — registers a pipeline with schema validation. Default storage is
+          "delta" (Spark memory, test/fixture mode); pass storage="postgres"
+          to materialize via PostgresLoader into analytics.<level>.<name>.
+          Pipelines can mix storage modes independently.
     Inputs — base class for typed upstream declarations
-    TableSource(table_name, model) — declare a Delta-table upstream
-    PostgresTableSource(schema, table, model) — declare a Postgres upstream
+    TableSource(table_name, model) — declare a registered upstream table
+    PostgresTableSource(schema, table) — declare a Postgres upstream
     MongoSource(db, collection, schema) — declare a MongoDB upstream
     @scenario(name) — register a fixture scenario
     list_scenarios(pipeline_name) — discover scenarios for a pipeline
     list_pipelines() — discover registered pipelines
-
-Read /home/danielspeixoto/.claude/plans/etl-jobs-are-overly-delightful-valiant.md
-for the original Delta design; the medallion-Postgres extension is in
-/home/danielspeixoto/.claude/plans/create-a-web-ui-proud-sunrise.md.
+    check_architecture(tables_root) — portable architecture compliance check
 """
 
+from .arch import ArchError, check_architecture
 from .decorator import pipeline
 from .inputs import (
     ContractSource,
@@ -36,11 +34,13 @@ from .registry import (
 )
 
 __all__ = [
+    "ArchError",
     "ContractSource",
     "Inputs",
     "MongoSource",
     "PostgresTableSource",
     "TableSource",
+    "check_architecture",
     "get_pipeline",
     "list_pipelines",
     "list_scenarios",

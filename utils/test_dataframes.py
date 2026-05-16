@@ -236,10 +236,9 @@ class TestSchemaMismatchIssues:
 
         if mismatch_exists:
             print("\n⚠️  SCHEMA MISMATCH DETECTED!")
-            print("This is the same issue you're seeing in Databricks:")
+            print("Schema mismatch:")
             print("- Declared schema expects LongType")
             print("- Inferred schema from data uses IntegerType for small values")
-            print("- This causes Delta table merge failures")
 
         # Try to create a DataFrame with the declared schema - this should work
         try:

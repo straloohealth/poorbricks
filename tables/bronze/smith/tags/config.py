@@ -1,8 +1,7 @@
 """Schema (data contract) for analytics.bronze.smith_tags.
 
 Mirrors mongo_smith.tags — patient-level tag rows as applied by the
-Smith user-store. No Fivetran→Delta mirror exists for this collection;
-the bronze pipeline reads MongoDB directly.
+Smith user-store. The bronze pipeline reads MongoDB directly.
 """
 
 from datetime import datetime

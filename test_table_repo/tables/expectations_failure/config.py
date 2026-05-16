@@ -23,3 +23,4 @@ class ExpectationsFailure(ValidatedStruct):
 
 class ExpectationsFailureExpectations(Expectations):
     MIN_ROWS = 999_999  # impossible to satisfy in fixtures mode
+    UNIQUE_KEYS = [["user_id"]]

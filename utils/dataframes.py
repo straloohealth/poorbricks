@@ -5,12 +5,11 @@ from pyspark.sql.types import DataType, Row, StructType
 
 from utils.strings import camel_to_snake_case
 
-# Spark Connect (Databricks Serverless / Connect runtime) has its own
-# DataFrame class at ``pyspark.sql.connect.DataFrame`` that is NOT a
-# subclass of ``pyspark.sql.DataFrame``. ``isinstance`` against the
-# classic class returns False, which would force ``create_dataframe``
-# down the list-of-rows path and round-trip every row through the
-# driver. Bundle both at import time.
+# Spark Connect has its own DataFrame class at
+# ``pyspark.sql.connect.DataFrame`` that is NOT a subclass of
+# ``pyspark.sql.DataFrame``. ``isinstance`` against the classic class
+# returns False, forcing ``create_dataframe`` down the list-of-rows path.
+# Bundle both at import time so isinstance checks catch either kind.
 try:
     from pyspark.sql.connect.dataframe import DataFrame as _ConnectDataFrame
 

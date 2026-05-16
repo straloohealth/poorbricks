@@ -2,8 +2,8 @@
 
 A pipeline declares its upstreams as `Annotated[DataFrame, TableSource(...)]`
 attributes on an `Inputs` subclass. The framework reads those annotations to
-decide what to do for each verify mode (resolve from real Delta, real Mongo,
-fixtures, or per-input overrides).
+decide what to do for each verify mode (resolve from Mongo, fixtures, contracts
+store, or per-input overrides).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TableSource:
-    """Declares a Delta-table upstream."""
+    """Declares a registered upstream table source."""
 
     table_name: str
     model: type[ValidatedStruct]
@@ -30,15 +30,12 @@ class TableSource:
 class MongoSource:
     """Declares a MongoDB upstream.
 
-    `secret_scope` and `secret_key` are looked up via dbutils.secrets in DLT
-    context. Local verify uses MONGO_URI from the environment instead.
+    Connection is resolved from MONGO_URI in the environment (or .env).
     """
 
     db: str
     collection: str
     schema: StructType
-    secret_scope: str | None = None
-    secret_key: str | None = None
 
 
 @dataclass(frozen=True)

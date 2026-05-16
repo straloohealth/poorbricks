@@ -1,4 +1,4 @@
-"""DLT/Postgres wiring for gold.patients.
+"""Wiring for gold.patients.
 
 Reads ``poorbricks_dev.silver.dim_patient`` and projects the columns
 overseer consumes into ``analytics.gold.patients`` via the medallion

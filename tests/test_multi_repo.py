@@ -23,6 +23,8 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from poorbricks.arch import check_architecture
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TABLES_ROOT = REPO_ROOT / "test_table_repo" / "tables"
 
@@ -198,3 +200,32 @@ def test_verify_ci_gold_patients_passes(monkeypatch: pytest.MonkeyPatch) -> None
     errors = verify_ci(tables_root=TABLES_ROOT, mode="fixtures")
     gold_errors = [e for e in errors if e.pipeline_key == "postgres:gold_patients"]
     assert gold_errors == [], f"gold_patients should pass, got: {gold_errors}"
+
+
+# --- check_architecture ----------------------------------------------------
+
+
+def test_arch_check_catches_malformed_pipeline() -> None:
+    """check_architecture() must report missing required files for the malformed_pipeline fixture."""
+    errors = check_architecture(tables_root=TABLES_ROOT)
+    malformed = [e for e in errors if "malformed_pipeline" in e.pipeline_dir]
+    assert malformed, (
+        "Expected arch errors for malformed_pipeline but got none. "
+        f"All errors: {[e.format() for e in errors]}"
+    )
+    messages = " ".join(e.message for e in malformed)
+    assert "fixtures.py" in messages or "transform.py" in messages, (
+        f"Expected missing file message, got: {messages}"
+    )
+
+
+def test_arch_check_passes_for_well_formed_pipelines() -> None:
+    """All well-formed test_table_repo pipelines must pass the architecture check."""
+    errors = check_architecture(tables_root=TABLES_ROOT)
+    well_formed_errors = [
+        e for e in errors if "malformed_pipeline" not in e.pipeline_dir
+    ]
+    assert well_formed_errors == [], (
+        "Well-formed pipelines should pass arch check:\n"
+        + "\n".join(e.format() for e in well_formed_errors)
+    )

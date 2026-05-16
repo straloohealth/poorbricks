@@ -100,7 +100,7 @@ class TestValidationDecorator:
                 {"id": "msg2", "speaker": "PATIENT", "created_at": datetime.now()},
             ]
             return create_dataframe(
-                data=invalid_data,
+                data=invalid_data,  # type: ignore[arg-type]
                 target_schema=TestMessageWithOptionalFields.to_struct(),
             )
 
@@ -238,30 +238,29 @@ class TestValidationDecorator:
             test_function()
 
     @pytest.mark.spark
-    def test_decorator_integration_with_mock_dlt_table(
-        self, spark: SparkSession
-    ) -> None:
-        """Test integration pattern similar to how it would be used with DLT tables."""
+    def test_decorator_integration_with_mock_table(self, spark: SparkSession) -> None:
+        """Test that verify_with_model composes correctly with another decorator."""
 
-        # Mock the DLT table decorator behavior
-        def mock_dlt_table(name: str, schema: StructType, **kwargs):
-            def decorator(func):
-                # Store metadata like real DLT would
-                func._dlt_name = name
-                func._dlt_schema = schema
-                func._dlt_kwargs = kwargs
+        from collections.abc import Callable
+        from typing import Any
+
+        def mock_table(name: str, schema: StructType, **kwargs: Any) -> Callable:
+            def decorator(func: Callable) -> Callable:
+                func._table_name = name  # type: ignore[attr-defined]
+                func._table_schema = schema  # type: ignore[attr-defined]
+                func._table_kwargs = kwargs  # type: ignore[attr-defined]
                 return func
 
             return decorator
 
         @verify_with_model(model=TestMessage)
-        @mock_dlt_table(
+        @mock_table(
             name="test_messages",
             schema=TestMessage.to_struct(),
             comment="Test messages table",
         )
         def messages_table() -> DataFrame:
-            """Test DLT table function."""
+            """Test pipeline function."""
             test_data = [
                 mock_model(TestMessage, {"id": "msg1"}),
                 mock_model(TestMessage, {"id": "msg2"}),
@@ -274,10 +273,10 @@ class TestValidationDecorator:
         result_df = messages_table()
         assert result_df.count() == 2
 
-        # Verify DLT metadata is preserved
-        assert messages_table._dlt_name == "test_messages"
-        assert messages_table._dlt_schema == TestMessage.to_struct()
-        assert messages_table.__doc__ == "Test DLT table function."
+        # Verify metadata is preserved through the decorator chain
+        assert messages_table._table_name == "test_messages"
+        assert messages_table._table_schema == TestMessage.to_struct()
+        assert messages_table.__doc__ == "Test pipeline function."
 
 
 class TestIntegerTypeValidation:

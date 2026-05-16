@@ -13,3 +13,4 @@ class MissingContract(ValidatedStruct):
 
 class MissingContractExpectations(Expectations):
     MIN_ROWS = 1
+    UNIQUE_KEYS = [["user_id"]]
