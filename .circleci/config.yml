@@ -1,46 +1,52 @@
 version: 2.1
 
 # ── Anchors ────────────────────────────────────────────────────────────────
-_defaults:
-  docker: &image
-    - image: docker.io/danielspeixoto/databricks
-  restore: &restore_cache
-    restore_cache:
-      keys:
-        - v2-deps-{{ checksum "poetry.lock" }}
-        - v2-deps-
-  install: &install
-    run:
-      name: Install dependencies
-      command: pip install --quiet poetry && poetry install --no-interaction
-  save: &save_cache
-    save_cache:
-      key: v2-deps-{{ checksum "poetry.lock" }}
-      paths:
-        - /root/.cache/pypoetry/virtualenvs
-  setup: &setup
-    steps:
-      - checkout
-      - *restore_cache
-      - *install
-      - *save_cache
-  docker_images: &docker_images
-    - image: docker.io/danielspeixoto/databricks
-    - image: mongo:7
-    - image: postgres:16
-      environment:
-        POSTGRES_DB: analytics
-        POSTGRES_USER: analytics
-        POSTGRES_PASSWORD: analytics
+restore_cache: &restore_cache
+  restore_cache:
+    keys:
+      - v2-deps-{{ checksum "poetry.lock" }}
+      - v2-deps-
+
+install_deps: &install_deps
+  run:
+    name: Install dependencies
+    command: pip install --quiet poetry && poetry install --no-interaction
+
+save_cache: &save_cache
+  save_cache:
+    key: v2-deps-{{ checksum "poetry.lock" }}
+    paths:
+      - /root/.cache/pypoetry/virtualenvs
+
+setup_steps: &setup_steps
+  - checkout
+  - *restore_cache
+  - *install_deps
+  - *save_cache
+
+single_image: &single_image
+  - image: docker.io/danielspeixoto/databricks
+
+docker_images: &docker_images
+  - image: docker.io/danielspeixoto/databricks
+  - image: mongo:7
+  - image: postgres:16
+    environment:
+      POSTGRES_DB: analytics
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
 
 # ── Jobs ───────────────────────────────────────────────────────────────────
 jobs:
 
   lint-and-type-check:
-    docker: *image
+    docker: *single_image
     resource_class: medium
     steps:
-      - *setup
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
       - run:
           name: Ruff lint
           command: poetry run ruff check .
@@ -55,7 +61,10 @@ jobs:
     docker: *docker_images
     resource_class: medium
     steps:
-      - *setup
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
       - run:
           name: Wait for MongoDB
           command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
@@ -78,7 +87,10 @@ jobs:
     docker: *docker_images
     resource_class: medium
     steps:
-      - *setup
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
       - run:
           name: Multi-repo contract verification scenarios
           command: >
@@ -93,7 +105,10 @@ jobs:
     docker: *docker_images
     resource_class: medium
     steps:
-      - *setup
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
       - run:
           name: Wait for MongoDB
           command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
@@ -112,7 +127,10 @@ jobs:
     docker: *docker_images
     resource_class: large
     steps:
-      - *setup
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
       - run:
           name: Wait for MongoDB and PostgreSQL
           command: |
