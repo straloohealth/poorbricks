@@ -241,7 +241,9 @@ def _render_build_task() -> str:
                 env_vars=_ENV_VARS,
                 get_logs=True,
                 in_cluster=True,
-                is_delete_operator_pod=True,
+                on_finish_action="delete_pod",
+                reattach_on_restart=False,
+                do_xcom_push=False,
                 image_pull_policy="IfNotPresent",
                 dag=dag,
             )

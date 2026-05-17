@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: airflow-triggerer
+  namespace: airflow
+  labels:
+    component: triggerer
+spec:
+  serviceName: airflow-triggerer
+  replicas: 1
+  selector:
+    matchLabels:
+      component: triggerer
+  template:
+    metadata:
+      labels:
+        component: triggerer
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Always
+      nodeSelector:
+        poorbricks.io/dags: "true"
+      containers:
+      - name: triggerer
+        image: apache/airflow:3.2.0
+        imagePullPolicy: IfNotPresent
+        command: ["airflow", "triggerer"]
+        env:
+        - name: AIRFLOW_HOME
+          value: /opt/airflow
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: /opt/airflow/dags
+        - name: AIRFLOW__CORE__BASE_LOG_FOLDER
+          value: /tmp/airflow-logs
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql://airflow:airflow@airflow-postgresql:5432/airflow"
+        - name: AIRFLOW__CORE__FERNET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: fernet-key
+        ports:
+        - containerPort: 8794
+          name: triggerer
+        volumeMounts:
+        - name: logs
+          mountPath: /tmp/airflow-logs
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "ps aux | grep 'airflow triggerer' | grep -v grep"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: logs
+        emptyDir:
+          sizeLimit: 500Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-triggerer
+  namespace: airflow
+spec:
+  clusterIP: None
+  selector:
+    component: triggerer
+  ports:
+  - port: 8794
+    targetPort: 8794

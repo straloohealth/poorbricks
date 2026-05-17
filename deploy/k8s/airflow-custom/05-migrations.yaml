@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-migrations
+  namespace: airflow
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Never
+      containers:
+      - name: airflow-migrations
+        image: apache/airflow:3.2.0
+        imagePullPolicy: IfNotPresent
+        command: ["airflow", "db", "migrate"]
+        env:
+        - name: AIRFLOW_HOME
+          value: /opt/airflow
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: /opt/airflow/dags
+        - name: AIRFLOW__CORE__BASE_LOG_FOLDER
+          value: /tmp/airflow-logs
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql://airflow:airflow@airflow-postgresql:5432/airflow"
+        - name: AIRFLOW__CORE__FERNET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: fernet-key

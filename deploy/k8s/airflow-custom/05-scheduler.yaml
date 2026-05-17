@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: airflow-scheduler
+  namespace: airflow
+  labels:
+    component: scheduler
+spec:
+  serviceName: airflow-scheduler
+  replicas: 1
+  selector:
+    matchLabels:
+      component: scheduler
+  template:
+    metadata:
+      labels:
+        component: scheduler
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Always
+      nodeSelector:
+        poorbricks.io/dags: "true"
+      securityContext:
+        fsGroup: 50000
+      containers:
+      - name: scheduler
+        image: apache/airflow:3.2.0
+        imagePullPolicy: IfNotPresent
+        command: ["airflow", "scheduler"]
+        env:
+        - name: AIRFLOW_HOME
+          value: /opt/airflow
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: /opt/airflow/dags
+        - name: AIRFLOW__CORE__BASE_LOG_FOLDER
+          value: /tmp/airflow-logs
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql://airflow:airflow@airflow-postgresql:5432/airflow"
+        - name: AIRFLOW__CORE__FERNET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: fernet-key
+        ports:
+        - containerPort: 8793
+          name: scheduler
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /tmp/airflow-logs
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "ps aux | grep 'airflow scheduler' | grep -v grep"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: airflow-dags
+      - name: logs
+        emptyDir:
+          sizeLimit: 500Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-scheduler
+  namespace: airflow
+spec:
+  clusterIP: None
+  selector:
+    component: scheduler
+  ports:
+  - port: 8793
+    targetPort: 8793

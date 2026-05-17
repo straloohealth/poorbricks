@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: poorbricks-server
-  namespace: poorbricks
+  namespace: airflow
   labels:
     app: poorbricks-server
 spec:
@@ -16,6 +16,8 @@ spec:
         app: poorbricks-server
     spec:
       serviceAccountName: poorbricks-server
+      nodeSelector:
+        poorbricks.io/dags: "true"
       containers:
         - name: api
           image: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
@@ -31,11 +33,11 @@ spec:
             - name: POORBRICKS_API_WORKER_IMAGE
               value: docker.io/danielspeixoto/databricks:latest
             - name: POORBRICKS_API_WORKER_NAMESPACE
-              value: poorbricks-workers
+              value: airflow
             - name: POORBRICKS_API_TABLE_REPO_URL_TEMPLATE
               value: "https://github.com/{prefix}.git"
             - name: MONGO_URI
-              value: "mongodb://mongo.poorbricks.svc.cluster.local:27017"
+              value: "mongodb://mongo.airflow.svc.cluster.local:27017"
             - name: CONTRACTS_DB
               value: poorbricks_contracts
             - name: CONTRACTS_COLLECTION

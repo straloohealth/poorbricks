@@ -107,7 +107,7 @@ def port_forwards() -> None:
                 "get",
                 "pod",
                 "-n",
-                "poorbricks",
+                "airflow",
                 "-l",
                 "app=mongo",
                 "-o",
@@ -119,7 +119,7 @@ def port_forwards() -> None:
 
         # Open port-forwards
         pg_forward = _open_port_forward("postgres", pg_pod, 5432, 5432)
-        mongo_forward = _open_port_forward("poorbricks", mongo_pod, 27017, 27017)
+        mongo_forward = _open_port_forward("airflow", mongo_pod, 27017, 27017)
 
         yield
 
@@ -211,7 +211,7 @@ class TestPhase1_InfraPreCheck:
                 "get",
                 "pod",
                 "-n",
-                "poorbricks",
+                "airflow",
                 "-l",
                 "app=mongo",
                 "-o",
@@ -225,7 +225,7 @@ class TestPhase1_InfraPreCheck:
                 "get",
                 "pod",
                 "-n",
-                "poorbricks",
+                "airflow",
                 mongo_pod,
                 "-o",
                 "jsonpath={.status.phase}",

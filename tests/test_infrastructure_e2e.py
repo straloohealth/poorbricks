@@ -287,57 +287,11 @@ class TestWorkerPodDagAccess:
     official Externally Populated PVC pattern (no GCS, no sidecars).
     """
 
-    def test_values_yaml_has_pod_template_file_config(self) -> None:
-        """values.yaml must declare config.kubernetes.pod_template_file."""
-        import yaml
-
-        values_path = Path("deploy/k8s/airflow/values.yaml")
-        assert values_path.exists(), "deploy/k8s/airflow/values.yaml not found"
-
-        values = yaml.safe_load(values_path.read_text())
-        assert "kubernetes" in values.get("config", {}), (
-            "values.yaml missing config.kubernetes — executor pods cannot find pod template"
-        )
-        k8s_cfg = values["config"]["kubernetes"]
-        assert "pod_template_file" in k8s_cfg, (
-            "values.yaml missing config.kubernetes.pod_template_file"
-        )
-        assert (
-            k8s_cfg["pod_template_file"]
-            == "/opt/airflow/pod_templates/pod_template_file.yaml"
-        )
-
     def test_pod_template_file_exists(self) -> None:
         """deploy/k8s/airflow/pod_template.yaml must exist."""
         pod_tmpl = Path("deploy/k8s/airflow/pod_template.yaml")
         assert pod_tmpl.exists(), (
             "pod_template.yaml missing — executor pods will not receive DAGs"
-        )
-
-    def test_values_yaml_uses_pvc_dag_persistence(self) -> None:
-        """values.yaml must enable PVC-based DAG persistence.
-
-        Asserts: dags.persistence.enabled=true, existingClaim="airflow-dags",
-        dags.gitSync.enabled=false (we generate DAGs via API, not git).
-        """
-        import yaml
-
-        values_path = Path("deploy/k8s/airflow/values.yaml")
-        assert values_path.exists()
-
-        values = yaml.safe_load(values_path.read_text())
-        dags = values.get("dags", {})
-        persistence = dags.get("persistence", {})
-
-        assert persistence.get("enabled") is True, (
-            "dags.persistence.enabled must be true"
-        )
-        assert persistence.get("existingClaim") == "airflow-dags", (
-            "dags.persistence.existingClaim must be 'airflow-dags'"
-        )
-        git_sync = dags.get("gitSync", {})
-        assert git_sync.get("enabled") is False, (
-            "dags.gitSync.enabled must be false (DAGs are generated, not git-synced)"
         )
 
     def test_pod_template_uses_pvc_not_init_container(self) -> None:
@@ -406,46 +360,30 @@ class TestWorkerPodDagAccess:
                 f"pod_template.yaml contains '{term}' — remove all GCS references"
             )
 
-    def test_rbac_subjects_match_helm_sa_name(self) -> None:
-        """deploy/k8s/workers/rbac.yaml subjects must match Helm-created SA name.
+    def test_no_cross_namespace_rbac_needed(self) -> None:
+        """Single-namespace architecture eliminates need for cross-namespace RBAC.
 
-        Helm creates a single ServiceAccount named 'airflow' in the airflow
-        namespace. The RoleBinding must grant it permission to spawn pods in
-        poorbricks-workers namespace (KubernetesExecutor creates ephemeral pods).
+        All pods (scheduler, dag-processor, workers, API, MongoDB) are in the
+        airflow namespace, so the airflow ServiceAccount has native permissions
+        to spawn ephemeral worker pods without additional RoleBindings.
         """
-        import yaml
+        from pathlib import Path
 
         rbac_path = Path("deploy/k8s/workers/rbac.yaml")
-        assert rbac_path.exists(), "deploy/k8s/workers/rbac.yaml not found"
-
-        # File has multiple documents; find the RoleBinding
-        documents = list(yaml.safe_load_all(rbac_path.read_text()))
-        rbac = next((d for d in documents if d and d.get("kind") == "RoleBinding"), None)
-        assert rbac is not None, "No RoleBinding found in rbac.yaml"
-
-        subjects = rbac.get("subjects", [])
-        assert len(subjects) > 0, "RoleBinding must have subjects"
-
-        # All subjects must be the 'airflow' SA in 'airflow' namespace
-        for subject in subjects:
-            assert subject.get("kind") == "ServiceAccount"
-            assert subject.get("name") == "airflow", (
-                f"RoleBinding subject name must be 'airflow', got '{subject.get('name')}'"
-            )
-            assert subject.get("namespace") == "airflow", (
-                "RoleBinding subject namespace must be 'airflow'"
-            )
+        assert not rbac_path.exists(), (
+            "deploy/k8s/workers/rbac.yaml should be deleted in single-namespace architecture"
+        )
 
 
 class TestDeploymentManifests:
     """Verify K8s deployment manifests use PVC and local DAG store."""
 
     def test_pvc_yaml_exists_and_is_valid(self) -> None:
-        """deploy/k8s/airflow/pvc.yaml must exist and declare airflow-dags PVC."""
+        """deploy/k8s/airflow-custom/00-pvc.yaml must exist and declare airflow-dags PVC."""
         import yaml
 
-        pvc_path = Path("deploy/k8s/airflow/pvc.yaml")
-        assert pvc_path.exists(), "deploy/k8s/airflow/pvc.yaml not found"
+        pvc_path = Path("deploy/k8s/airflow-custom/00-pvc.yaml")
+        assert pvc_path.exists(), "deploy/k8s/airflow-custom/00-pvc.yaml not found"
 
         pvc = yaml.safe_load(pvc_path.read_text())
         assert pvc["kind"] == "PersistentVolumeClaim", (
@@ -522,7 +460,7 @@ class TestDeploymentManifests:
         ingress = yaml.safe_load(ingress_path.read_text())
         assert ingress["kind"] == "Ingress"
         assert ingress["metadata"]["name"] == "poorbricks-server"
-        assert ingress["metadata"]["namespace"] == "poorbricks"
+        assert ingress["metadata"]["namespace"] == "airflow"
 
         spec = ingress["spec"]
         assert spec.get("ingressClassName") == "tailscale", (
