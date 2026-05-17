@@ -28,7 +28,6 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from poorbricks.airflow import (
-    GcsDagStore,
     LocalDagStore,
     WorkflowConfig,
     WorkflowParseError,
@@ -163,9 +162,7 @@ def _handle_upload(
 
 
 def _build_store(cfg: ApiSettings) -> DagStore:
-    if cfg.dag_store == "gcs":
-        return GcsDagStore(bucket_name=cfg.dags_bucket)
-    return LocalDagStore(root=Path(cfg.dags_local_root))
+    return LocalDagStore(root=Path(cfg.dags_dir))
 
 
 def _extract_safely(payload: bytes, dest: Path) -> None:

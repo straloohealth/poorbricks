@@ -13,7 +13,7 @@ Provides:
 from __future__ import annotations
 
 from .dag_generator import generate_dag_file
-from .dag_store import DagStore, GcsDagStore, LocalDagStore
+from .dag_store import DagStore, LocalDagStore
 from .workflow import (
     TaskConfig,
     WorkflowConfig,
@@ -24,7 +24,6 @@ from .workflow import (
 
 __all__ = [
     "DagStore",
-    "GcsDagStore",
     "LocalDagStore",
     "TaskConfig",
     "WorkflowConfig",

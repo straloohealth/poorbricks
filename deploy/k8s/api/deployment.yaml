@@ -25,9 +25,9 @@ spec:
               name: http
           env:
             - name: POORBRICKS_API_DAG_STORE
-              value: gcs
-            - name: POORBRICKS_API_DAGS_BUCKET
-              value: poorbricks-airflow-dags
+              value: local
+            - name: POORBRICKS_API_DAGS_DIR
+              value: /opt/airflow/dags
             - name: POORBRICKS_API_WORKER_IMAGE
               value: docker.io/danielspeixoto/databricks:latest
             - name: POORBRICKS_API_WORKER_NAMESPACE
@@ -63,3 +63,10 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/dags
+      volumes:
+        - name: dags
+          persistentVolumeClaim:
+            claimName: airflow-dags

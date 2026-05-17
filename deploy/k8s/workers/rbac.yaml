@@ -14,8 +14,9 @@ rules:
     resources: ["events"]
     verbs: ["list", "watch"]
 ---
-# Airflow's scheduler SA (in the 'airflow' namespace) needs to spawn worker
-# pods in 'poorbricks-workers'. Bind once the Airflow Helm release exists.
+# The Airflow SA (in the 'airflow' namespace, created by Helm) needs to spawn
+# worker pods in 'poorbricks-workers' namespace. The KubernetesExecutor uses this
+# single SA for all orchestration.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -23,10 +24,7 @@ metadata:
   namespace: poorbricks-workers
 subjects:
   - kind: ServiceAccount
-    name: airflow-scheduler
-    namespace: airflow
-  - kind: ServiceAccount
-    name: airflow-worker
+    name: airflow
     namespace: airflow
 roleRef:
   kind: Role

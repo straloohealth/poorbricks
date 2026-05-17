@@ -5,7 +5,6 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings
 
 from poorbricks.constants import (
-    DEFAULT_DAGS_BUCKET,
     DEFAULT_NAMESPACE,
     DEFAULT_RUNTIME_SECRET_NAME,
     DEFAULT_WORKER_IMAGE,
@@ -19,7 +18,7 @@ class ApiSettings(BaseSettings):
     """
 
     dag_store: str = "local"
-    dags_bucket: str = DEFAULT_DAGS_BUCKET
+    dags_dir: str = "/opt/airflow/dags"
     dags_local_root: str = "/tmp/poorbricks-dags"
 
     worker_image: str = DEFAULT_WORKER_IMAGE

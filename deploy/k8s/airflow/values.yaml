@@ -7,11 +7,12 @@
 
 executor: KubernetesExecutor
 
-# DAGs are not baked into the image and not synced from git — a sidecar
-# rsyncs them from a GCS bucket every 30s. The upload API writes there.
+# DAGs are mounted from an externally-populated PVC (official Airflow pattern).
+# The upload API writes to the PVC; scheduler and executor pods read from it.
 dags:
   persistence:
-    enabled: false
+    enabled: true
+    existingClaim: airflow-dags
   gitSync:
     enabled: false
 
@@ -24,14 +25,9 @@ config:
   kubernetes:
     pod_template_file: /opt/airflow/pod_templates/pod_template_file.yaml
 
-# Workload Identity so the gcs-sync sidecar can read the bucket without
-# baked-in credentials. Bind this SA to a GCP SA via
-#   gcloud iam service-accounts add-iam-policy-binding ...
 serviceAccount:
   create: true
   name: airflow
-  annotations:
-    iam.gke.io/gcp-service-account: airflow-dags-reader@inner-autonomy-371516.iam.gserviceaccount.com
 
 webserver:
   service:
@@ -50,11 +46,3 @@ postgresql:
 
 redis:
   enabled: false
-
-# Pod spec overrides to add GCS sync sidecar and shared volume
-podAnnotations:
-  gcs-sync-enabled: "true"
-
-# Add sidecar and volume to scheduler using podSpecPatch (or similar mechanism)
-# Unfortunately, the Helm chart doesn't have a clean way to add sidecars,
-# so we'll use a post-install hook or apply the sidecar separately

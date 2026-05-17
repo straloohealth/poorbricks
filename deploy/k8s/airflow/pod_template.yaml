@@ -4,33 +4,14 @@ metadata:
   name: airflow-worker
 spec:
   serviceAccountName: airflow
-  initContainers:
-    - name: fetch-dags
-      image: google/cloud-sdk:alpine
-      env:
-        - name: HOME
-          value: /tmp
-        - name: GOOGLE_APPLICATION_CREDENTIALS
-          value: /var/secrets/gcs/key.json
-      command:
-        - sh
-        - -c
-        - |
-          gsutil -m cp -r gs://poorbricks-airflow-dags/* /opt/airflow/dags/ || true
-      volumeMounts:
-        - name: dags
-          mountPath: /opt/airflow/dags
-        - name: gcs-key
-          mountPath: /var/secrets/gcs
-          readOnly: true
   containers:
     - name: base
       volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
+          readOnly: true
   volumes:
     - name: dags
-      emptyDir: {}
-    - name: gcs-key
-      secret:
-        secretName: airflow-gcs-key
+      persistentVolumeClaim:
+        claimName: airflow-dags
+        readOnly: true

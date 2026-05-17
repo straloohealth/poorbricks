@@ -281,11 +281,10 @@ class TestDagGeneration:
 
 
 class TestWorkerPodDagAccess:
-    """Verify executor worker pods can access DAGs at startup.
+    """Verify executor worker pods can access DAGs via PVC.
 
-    These tests check that the required Airflow configuration files exist and
-    are correctly structured. They fail on the current codebase (worker pods
-    have no DAG access) and pass once the fix is applied.
+    These tests check that the required Airflow configuration files use the
+    official Externally Populated PVC pattern (no GCS, no sidecars).
     """
 
     def test_values_yaml_has_pod_template_file_config(self) -> None:
@@ -315,37 +314,64 @@ class TestWorkerPodDagAccess:
             "pod_template.yaml missing — executor pods will not receive DAGs"
         )
 
-    def test_pod_template_has_dag_fetch_structure(self) -> None:
-        """pod_template.yaml must have fetch-dags init container and dags emptyDir."""
+    def test_values_yaml_uses_pvc_dag_persistence(self) -> None:
+        """values.yaml must enable PVC-based DAG persistence.
+
+        Asserts: dags.persistence.enabled=true, existingClaim="airflow-dags",
+        dags.gitSync.enabled=false (we generate DAGs via API, not git).
+        """
+        import yaml
+
+        values_path = Path("deploy/k8s/airflow/values.yaml")
+        assert values_path.exists()
+
+        values = yaml.safe_load(values_path.read_text())
+        dags = values.get("dags", {})
+        persistence = dags.get("persistence", {})
+
+        assert persistence.get("enabled") is True, (
+            "dags.persistence.enabled must be true"
+        )
+        assert persistence.get("existingClaim") == "airflow-dags", (
+            "dags.persistence.existingClaim must be 'airflow-dags'"
+        )
+        git_sync = dags.get("gitSync", {})
+        assert git_sync.get("enabled") is False, (
+            "dags.gitSync.enabled must be false (DAGs are generated, not git-synced)"
+        )
+
+    def test_pod_template_uses_pvc_not_init_container(self) -> None:
+        """pod_template.yaml must mount PVC, not use fetch-dags init container."""
         import yaml
 
         pod_tmpl_path = Path("deploy/k8s/airflow/pod_template.yaml")
         assert pod_tmpl_path.exists()
 
         tmpl = yaml.safe_load(pod_tmpl_path.read_text())
-
-        assert tmpl["apiVersion"] == "v1", "pod_template must have apiVersion: v1"
-        assert tmpl["kind"] == "Pod", "pod_template must have kind: Pod"
+        assert tmpl["apiVersion"] == "v1"
+        assert tmpl["kind"] == "Pod"
         assert tmpl["spec"]["serviceAccountName"] == "airflow"
 
-        init_containers = tmpl["spec"]["initContainers"]
-        fetch_dags = next(
-            (c for c in init_containers if c["name"] == "fetch-dags"), None
-        )
-        assert fetch_dags is not None, "No init container named 'fetch-dags'"
-        assert fetch_dags["image"] == "google/cloud-sdk:alpine", (
-            "fetch-dags image must be google/cloud-sdk:alpine"
+        # Must NOT have init containers (no gsutil fetch-dags)
+        init_containers = tmpl["spec"].get("initContainers", [])
+        assert len(init_containers) == 0, (
+            "pod_template must not have initContainers (no GCS fetch-dags)"
         )
 
-        all_args = " ".join(fetch_dags.get("command", []) + fetch_dags.get("args", []))
-        assert "gsutil" in all_args, "fetch-dags must run gsutil"
-        assert "gs://poorbricks-airflow-dags" in all_args, (
-            "fetch-dags must reference the GCS bucket gs://poorbricks-airflow-dags"
+        # Must have a PVC volume named 'dags'
+        volumes = {v["name"]: v for v in tmpl["spec"]["volumes"]}
+        assert "dags" in volumes, "Missing 'dags' volume"
+        assert "persistentVolumeClaim" in volumes["dags"], (
+            "'dags' volume must be persistentVolumeClaim, not emptyDir"
         )
+        assert (
+            volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
+        ), "PVC claim must be named 'airflow-dags'"
 
+        # Base container must mount the PVC at /opt/airflow/dags (read-only)
         containers = tmpl["spec"]["containers"]
         base = next((c for c in containers if c["name"] == "base"), None)
-        assert base is not None, "No container named 'base' in pod template"
+        assert base is not None, "No container named 'base'"
 
         dag_mount = next(
             (
@@ -355,14 +381,176 @@ class TestWorkerPodDagAccess:
             ),
             None,
         )
-        assert dag_mount is not None, (
-            "base container missing /opt/airflow/dags volume mount"
+        assert dag_mount is not None, "base container must mount /opt/airflow/dags"
+        assert dag_mount.get("readOnly") is True, (
+            "DAG mount must be read-only in executor pods"
         )
 
-        volumes = {v["name"]: v for v in tmpl["spec"]["volumes"]}
-        assert "dags" in volumes, "Missing 'dags' volume"
-        assert "emptyDir" in volumes["dags"], "'dags' volume must be emptyDir"
-        assert "gcs-key" in volumes, "Missing 'gcs-key' volume"
-        assert (
-            volumes["gcs-key"].get("secret", {}).get("secretName") == "airflow-gcs-key"
-        ), "gcs-key volume must reference secret 'airflow-gcs-key'"
+    def test_pod_template_has_no_gcs_references(self) -> None:
+        """pod_template.yaml must not reference GCS, gsutil, or GCP credentials."""
+
+        pod_tmpl_path = Path("deploy/k8s/airflow/pod_template.yaml")
+        assert pod_tmpl_path.exists()
+
+        content = pod_tmpl_path.read_text()
+
+        forbidden = [
+            "gsutil",
+            "google/cloud-sdk",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "gcs-key",
+            "gs://poorbricks-airflow-dags",
+        ]
+        for term in forbidden:
+            assert term not in content, (
+                f"pod_template.yaml contains '{term}' — remove all GCS references"
+            )
+
+    def test_rbac_subjects_match_helm_sa_name(self) -> None:
+        """deploy/k8s/workers/rbac.yaml subjects must match Helm-created SA name.
+
+        Helm creates a single ServiceAccount named 'airflow' in the airflow
+        namespace. The RoleBinding must grant it permission to spawn pods in
+        poorbricks-workers namespace (KubernetesExecutor creates ephemeral pods).
+        """
+        import yaml
+
+        rbac_path = Path("deploy/k8s/workers/rbac.yaml")
+        assert rbac_path.exists(), "deploy/k8s/workers/rbac.yaml not found"
+
+        # File has multiple documents; find the RoleBinding
+        documents = list(yaml.safe_load_all(rbac_path.read_text()))
+        rbac = next((d for d in documents if d and d.get("kind") == "RoleBinding"), None)
+        assert rbac is not None, "No RoleBinding found in rbac.yaml"
+
+        subjects = rbac.get("subjects", [])
+        assert len(subjects) > 0, "RoleBinding must have subjects"
+
+        # All subjects must be the 'airflow' SA in 'airflow' namespace
+        for subject in subjects:
+            assert subject.get("kind") == "ServiceAccount"
+            assert subject.get("name") == "airflow", (
+                f"RoleBinding subject name must be 'airflow', got '{subject.get('name')}'"
+            )
+            assert subject.get("namespace") == "airflow", (
+                "RoleBinding subject namespace must be 'airflow'"
+            )
+
+
+class TestDeploymentManifests:
+    """Verify K8s deployment manifests use PVC and local DAG store."""
+
+    def test_pvc_yaml_exists_and_is_valid(self) -> None:
+        """deploy/k8s/airflow/pvc.yaml must exist and declare airflow-dags PVC."""
+        import yaml
+
+        pvc_path = Path("deploy/k8s/airflow/pvc.yaml")
+        assert pvc_path.exists(), "deploy/k8s/airflow/pvc.yaml not found"
+
+        pvc = yaml.safe_load(pvc_path.read_text())
+        assert pvc["kind"] == "PersistentVolumeClaim", (
+            "pvc.yaml must define kind: PersistentVolumeClaim"
+        )
+        assert pvc["metadata"]["name"] == "airflow-dags", (
+            "PVC must be named 'airflow-dags'"
+        )
+        assert pvc["metadata"]["namespace"] == "airflow", (
+            "PVC must be in 'airflow' namespace"
+        )
+
+        spec = pvc["spec"]
+        assert "ReadWriteOnce" in spec.get("accessModes", []), (
+            "PVC must allow ReadWriteOnce access"
+        )
+        storage = spec.get("resources", {}).get("requests", {}).get("storage")
+        assert storage is not None and storage.endswith(("Gi", "Mi")), (
+            "PVC must declare storage request (e.g., 10Gi)"
+        )
+
+    def test_api_deployment_uses_local_dag_store(self) -> None:
+        """deploy/k8s/api/deployment.yaml must use local DAG store + PVC mount."""
+        import yaml
+
+        api_path = Path("deploy/k8s/api/deployment.yaml")
+        assert api_path.exists(), "deploy/k8s/api/deployment.yaml not found"
+
+        api = yaml.safe_load(api_path.read_text())
+        assert api["kind"] == "Deployment"
+
+        # Find the api container
+        containers = api["spec"]["template"]["spec"]["containers"]
+        server = next((c for c in containers if c["name"] == "api"), None)
+        assert server is not None, "No api container found"
+
+        # Check env vars
+        env_dict = {e["name"]: e.get("value") for e in server.get("env", [])}
+        assert env_dict.get("POORBRICKS_API_DAG_STORE") == "local", (
+            "POORBRICKS_API_DAG_STORE must be 'local'"
+        )
+        assert "POORBRICKS_API_DAGS_BUCKET" not in env_dict, (
+            "POORBRICKS_API_DAGS_BUCKET must not be set (GCS removed)"
+        )
+        assert env_dict.get("POORBRICKS_API_DAGS_DIR") == "/opt/airflow/dags", (
+            "POORBRICKS_API_DAGS_DIR must point to /opt/airflow/dags (PVC mount)"
+        )
+
+        # Check volume mount
+        vol_mounts = {m["name"]: m for m in server.get("volumeMounts", [])}
+        assert "dags" in vol_mounts, (
+            "poorbricks-server container must mount 'dags' volume"
+        )
+        assert vol_mounts["dags"]["mountPath"] == "/opt/airflow/dags"
+
+        # Check volume definition in pod spec
+        volumes = {v["name"]: v for v in api["spec"]["template"]["spec"]["volumes"]}
+        assert "dags" in volumes, "Pod spec must define 'dags' volume"
+        assert "persistentVolumeClaim" in volumes["dags"], (
+            "'dags' volume must be persistentVolumeClaim"
+        )
+        assert volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
+
+    def test_api_ingress_uses_tailscale(self) -> None:
+        """deploy/k8s/api/ingress.yaml must define Tailscale Ingress.
+
+        Exposes poorbricks-server API on Tailscale VPN at /health and /v1/upload.
+        """
+        import yaml
+
+        ingress_path = Path("deploy/k8s/api/ingress.yaml")
+        assert ingress_path.exists(), "deploy/k8s/api/ingress.yaml not found"
+
+        ingress = yaml.safe_load(ingress_path.read_text())
+        assert ingress["kind"] == "Ingress"
+        assert ingress["metadata"]["name"] == "poorbricks-server"
+        assert ingress["metadata"]["namespace"] == "poorbricks"
+
+        spec = ingress["spec"]
+        assert spec.get("ingressClassName") == "tailscale", (
+            "Ingress must use ingressClassName: tailscale (VPN exposure)"
+        )
+
+        # Verify backend service
+        rules = spec.get("rules", [])
+        assert len(rules) > 0, "Ingress must have rules"
+
+        for rule in rules:
+            paths = rule.get("http", {}).get("paths", [])
+            for path in paths:
+                backend = path.get("backend", {}).get("service", {})
+                assert backend.get("name") == "poorbricks-server", (
+                    "Backend service must be named 'poorbricks-server'"
+                )
+                assert backend.get("port", {}).get("number") == 8080, (
+                    "Backend service port must be 8080"
+                )
+
+    def test_deploy_script_exists(self) -> None:
+        """scripts/deploy_k8s.sh must exist and be executable."""
+        import stat
+
+        deploy_script = Path("scripts/deploy_k8s.sh")
+        assert deploy_script.exists(), "scripts/deploy_k8s.sh not found"
+
+        # Check executable permission
+        mode = deploy_script.stat().st_mode
+        assert mode & stat.S_IXUSR, "scripts/deploy_k8s.sh must be executable"
