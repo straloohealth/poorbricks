@@ -1,9 +1,9 @@
 """Wheel-install boundary smoke test.
 
 Builds the framework as a wheel, installs it into a clean virtualenv, and
-runs ``poorbricks-verify --mode local`` against ``test_table_repo/tables/``.
+runs ``poorbricks verify --mode local`` against ``test_table_repo/tables/``.
 Proves the package import boundary works — i.e. the published wheel
-exports everything a downstream repo needs to run ``poorbricks-verify``.
+exports everything a downstream repo needs to run ``poorbricks verify``.
 
 The fixture repo ``test_table_repo/tables/`` intentionally includes a
 ``missing_contract`` pipeline, so the CLI is expected to exit non-zero with
@@ -11,7 +11,7 @@ The fixture repo ``test_table_repo/tables/`` intentionally includes a
 zero exit at all, is the actual failure.
 
 This test does not need MongoDB or PostgreSQL at runtime (the underlying
-``poorbricks-verify --mode local`` is offline), so it is marked ``slow``
+``poorbricks verify --mode local`` is offline), so it is marked ``slow``
 rather than ``integration``.
 
 Run with:
@@ -57,12 +57,12 @@ def built_wheel() -> Path:
 
 @pytest.fixture
 def verify_cli(built_wheel: Path) -> Iterator[Path]:
-    """Install the wheel into a temp venv and yield the path to poorbricks-verify."""
+    """Install the wheel into a temp venv and yield the path to the poorbricks CLI."""
     with tempfile.TemporaryDirectory(prefix="poorbricks-sim-") as tmp:
         venv = Path(tmp) / "venv"
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, text=True)
         pip = venv / "bin" / "pip"
-        verify = venv / "bin" / "poorbricks-verify"
+        cli = venv / "bin" / "poorbricks"
 
         subprocess.run(
             [str(pip), "install", "--quiet", str(built_wheel)],
@@ -75,7 +75,7 @@ def verify_cli(built_wheel: Path) -> Iterator[Path]:
             text=True,
         )
 
-        yield verify
+        yield cli
 
 
 def test_verify_cli_runs_from_installed_wheel_and_reports_missing_contract(
@@ -85,13 +85,20 @@ def test_verify_cli_runs_from_installed_wheel_and_reports_missing_contract(
     assert TABLES_ROOT.exists(), f"fixture directory missing: {TABLES_ROOT}"
 
     result = subprocess.run(
-        [str(verify_cli), "--mode", "local", "--tables-root", str(TABLES_ROOT)],
+        [
+            str(verify_cli),
+            "verify",
+            "--mode",
+            "local",
+            "--tables-root",
+            str(TABLES_ROOT),
+        ],
         text=True,
         capture_output=True,
     )
 
     assert result.returncode != 0, (
-        "poorbricks-verify exited 0 — expected the missing_contract "
+        "poorbricks verify exited 0 — expected the missing_contract "
         "fixture to cause a non-zero exit.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )

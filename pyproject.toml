@@ -7,10 +7,11 @@ packages = [
     { include = "poorbricks" },
     { include = "validation" },
     { include = "utils" },
+    { include = "api" },
 ]
 
 [tool.poetry.scripts]
-poorbricks-verify = "poorbricks.verify:main"
+poorbricks = "poorbricks.cli:main"
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
@@ -27,6 +28,12 @@ pandas = "^3.0.1"
 openpyxl = "^3.1.5"
 psycopg2-binary = "^2.9"
 streamlit = "^1.40"
+croniter = "^2.0"
+httpx = "^0.27"
+fastapi = "^0.115"
+uvicorn = {extras = ["standard"], version = "^0.30"}
+python-multipart = "^0.0.9"
+google-cloud-storage = "^2.18"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.1"
@@ -40,6 +47,12 @@ pre-commit = "^3.6.0"
 ruff = ">=0.9.10"
 pandas-stubs = "^3.0.0.260204"
 types-psycopg2 = "^2.9.21.20260509"
+
+
+[tool.poetry.group.test.dependencies]
+psycopg = "^3.3.4"
+pymongo = "^4.17.0"
+requests = "^2.34.2"
 
 [build-system]
 requires = ["poetry-core"]
@@ -64,6 +77,8 @@ addopts = [
 markers = [
     "spark: marks tests that require Spark session",
     "integration: marks tests that require MongoDB connection",
+    "infrastructure: marks tests for infrastructure end-to-end verification",
+    "k8s_e2e: marks tests that require a running Kubernetes cluster with Airflow",
     "xdist_group: pytest-xdist grouping (run on the same worker)",
     "slow: marks tests as slow running"
 ]
@@ -109,6 +124,11 @@ module = [
     "pytest",
     "pytest.*",
     "pydantic_settings.*",
+    "google.*",
+    "google.cloud.*",
+    "croniter.*",
+    "fastapi.*",
+    "uvicorn.*",
 ]
 ignore_missing_imports = true
 

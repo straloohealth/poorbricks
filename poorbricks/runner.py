@@ -373,4 +373,42 @@ def run(
     return _execute_pipeline(meta, inputs)
 
 
-__all__ = ["RunResult", "run"]
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: ``poorbricks run --pipeline <key> --mode <mode>``.
+
+    Used inside Airflow worker pods so each task is a single subprocess
+    invocation. Returns the exit code; non-zero on validation errors.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="poorbricks run")
+    parser.add_argument(
+        "--pipeline", required=True, help="pipeline key, e.g. 'silver.dim_patient'"
+    )
+    parser.add_argument(
+        "--mode",
+        default="production",
+        choices=sorted({"fixtures", "scenario", "production", "fault", "validate"}),
+    )
+    parser.add_argument(
+        "--scenario", default=None, help="required when --mode=scenario"
+    )
+    parser.add_argument("--fault", default=None, help="required when --mode=fault")
+    args = parser.parse_args(argv)
+
+    result = run(
+        pipeline_key=args.pipeline,
+        mode=args.mode,
+        scenario_name=args.scenario,
+        fault_name=args.fault,
+    )
+    if result.errors:
+        for err in result.errors:
+            print(f"✗ {err}")
+        return 1
+    if result.rows is not None:
+        print(f"✓ {args.pipeline}: {result.rows} rows")
+    return 0
+
+
+__all__ = ["RunResult", "main", "run"]

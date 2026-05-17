@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poorbricks-server
+  namespace: poorbricks
+  labels:
+    app: poorbricks-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: poorbricks-server
+  template:
+    metadata:
+      labels:
+        app: poorbricks-server
+    spec:
+      serviceAccountName: poorbricks-server
+      containers:
+        - name: api
+          image: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: POORBRICKS_API_DAG_STORE
+              value: gcs
+            - name: POORBRICKS_API_DAGS_BUCKET
+              value: poorbricks-airflow-dags
+            - name: POORBRICKS_API_WORKER_IMAGE
+              value: docker.io/danielspeixoto/databricks:latest
+            - name: POORBRICKS_API_WORKER_NAMESPACE
+              value: poorbricks-workers
+            - name: POORBRICKS_API_TABLE_REPO_URL_TEMPLATE
+              value: "https://github.com/{prefix}.git"
+            - name: MONGO_URI
+              value: "mongodb://mongo.poorbricks.svc.cluster.local:27017"
+            - name: CONTRACTS_DB
+              value: poorbricks_contracts
+            - name: CONTRACTS_COLLECTION
+              value: data_contracts
+          envFrom:
+            - secretRef:
+                name: poorbricks-runtime
+                optional: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30

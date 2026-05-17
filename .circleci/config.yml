@@ -156,6 +156,23 @@ jobs:
       - store_test_results:
           path: test-results-integration.xml
 
+  workflow-compilation-tests:
+    docker: *single_image
+    resource_class: medium
+    steps:
+      - checkout
+      - *restore_cache
+      - *install_deps
+      - *save_cache
+      - run:
+          name: Workflow parsing and DAG generation tests
+          command: >
+            poetry run pytest tests/test_infrastructure_e2e.py
+            -v --tb=short
+            --junitxml=test-results-workflow.xml
+      - store_test_results:
+          path: test-results-workflow.xml
+
 # ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
   test:
@@ -167,6 +184,7 @@ workflows:
       - unit-tests
       - multi-repo-tests
       - build-and-smoke
+      - workflow-compilation-tests
       - integration-tests:
           requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
 
@@ -180,6 +198,8 @@ workflows:
       - multi-repo-tests:
           requires: [lint-and-type-check]
       - build-and-smoke:
+          requires: [lint-and-type-check]
+      - workflow-compilation-tests:
           requires: [lint-and-type-check]
       - integration-tests:
           requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]

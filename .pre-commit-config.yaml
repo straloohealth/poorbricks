@@ -27,7 +27,11 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-        exclude: ^\.circleci/config\.yml$
+        exclude: |
+          (?x)^(
+            \.circleci/config\.yml|
+            deploy/k8s/.*\.yaml
+          )$
       - id: check-added-large-files
         args: [--maxkb=1000]
       - id: check-merge-conflict

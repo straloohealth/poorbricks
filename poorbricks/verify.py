@@ -248,9 +248,10 @@ def verify_ci(
     return errors
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Verify table-repo contracts and expectations"
+        prog="poorbricks verify",
+        description="Verify table-repo contracts and expectations",
     )
     parser.add_argument("--mode", choices=["local", "ci", "arch"], required=True)
     parser.add_argument(
@@ -271,7 +272,7 @@ def main() -> None:
         choices=["production", "fixtures"],
         help="(ci mode) runner mode used to source upstream data",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.mode == "local":
         errors: list[Any] = verify_local(tables_root=args.tables_root)
