@@ -10,7 +10,18 @@ restore_cache: &restore_cache
 install_deps: &install_deps
   run:
     name: Install dependencies
-    command: pip install --quiet poetry && poetry install --no-interaction
+    environment:
+      PIP_DEFAULT_TIMEOUT: "180"
+      PIP_RETRIES: "5"
+    command: |
+      pip install --quiet poetry
+      for attempt in 1 2 3; do
+        if poetry install --no-interaction; then
+          break
+        fi
+        echo "poetry install attempt $attempt failed; retrying in 15s..."
+        sleep 15
+      done
 
 save_cache: &save_cache
   save_cache:
