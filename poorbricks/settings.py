@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     contracts_collection: str = "data_contracts"
     delta_output_dir: str = "artifacts/delta"
     tables_root: Path = Path("tables")
-    postgres_host: str = "postgresql-rw.storage.svc.cluster.local"
+    postgres_host: str = "localhost"
     postgres_port: int = 5432
-    postgres_db: str = "poorbricks"
+    postgres_db: str = "analytics"
     postgres_user: str = "analytics"
     postgres_password: str = "analytics"
 
