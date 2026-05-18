@@ -4,8 +4,8 @@ version: 2.1
 restore_cache: &restore_cache
   restore_cache:
     keys:
-      - v2-deps-{{ checksum "poetry.lock" }}
-      - v2-deps-
+      - v3-deps-{{ checksum "poetry.lock" }}
+      - v3-deps-
 
 install_deps: &install_deps
   run:
@@ -14,7 +14,7 @@ install_deps: &install_deps
 
 save_cache: &save_cache
   save_cache:
-    key: v2-deps-{{ checksum "poetry.lock" }}
+    key: v3-deps-{{ checksum "poetry.lock" }}
     paths:
       - /root/.cache/pypoetry/virtualenvs
 
