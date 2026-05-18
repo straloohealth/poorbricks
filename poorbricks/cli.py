@@ -4,6 +4,7 @@ Subcommands:
 
 * ``poorbricks verify`` — see ``poorbricks.verify``.
 * ``poorbricks run`` — see ``poorbricks.runner``.
+* ``poorbricks check`` — see ``poorbricks.check``.
 * ``poorbricks upload`` — see ``poorbricks.upload_client``.
 """
 
@@ -23,6 +24,11 @@ def main(argv: list[str] | None = None) -> int:
         "verify", help="verify contracts / expectations", add_help=False
     )
     subparsers.add_parser("run", help="run a pipeline locally", add_help=False)
+    subparsers.add_parser(
+        "check",
+        help="verify a postgres pipeline's row count against its Expectations",
+        add_help=False,
+    )
     subparsers.add_parser(
         "upload",
         help="upload pipelines + workflows to a framework server",
@@ -45,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         from poorbricks.runner import main as run_main
 
         return run_main(rest)
+    if command == "check":
+        from poorbricks.check import main as check_main
+
+        return check_main(rest)
     if command == "upload":
         from poorbricks.upload_client import main as upload_main
 

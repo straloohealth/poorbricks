@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .inputs import Inputs
-from .registry import PipelineMeta, all_pipelines
+from .registry import PipelineMeta
 from .runner import RunResult, run
 
 if TYPE_CHECKING:
@@ -136,17 +136,9 @@ def run_and_persist(
     if result.df is None:
         return result
 
-    meta = all_pipelines().get(f"{pipeline_key}") or all_pipelines().get(
-        f"postgres:{pipeline_key.split(':')[-1]}"
-    )
-    if meta is None:
-        # Fallback: try to find by table_name
-        for m in all_pipelines().values():
-            if m.table_name == pipeline_key or m.module.endswith(pipeline_key):
-                meta = m
-                break
-    if meta is None:
-        raise ValueError(f"Pipeline metadata not found for {pipeline_key!r}")
+    from .runner import _resolve_meta
+
+    meta = _resolve_meta(pipeline_key)
 
     # Write to Postgres if applicable
     if meta.target_storage == "postgres":

@@ -78,13 +78,12 @@ class SmithUserBronzeExpectations(Expectations):
     """
 
     MIN_ROWS = 9_199
-    UNIQUE_KEYS = [["patient_id"]]
+    UNIQUE_KEYS = [["mongo_id"]]
     NON_NULL_COLUMNS = []
     NULL_RATE_MAX = {
         "birth_date": 0.1,
-        "external_id": 0.15,
-        "extra_fields": 0.05,
-        "gender": 0.15,
+        "externalId": 0.15,
+        "extraFields": 0.05,
         "origin": 0.01,
     }
-    ENUM_VALUES = {"gender": ["FEMALE", "MALE"]}
+    ENUM_VALUES: dict[str, list[str]] = {}

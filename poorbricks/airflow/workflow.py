@@ -39,11 +39,15 @@ class WorkflowParseError(ValueError):
         self.message = message
 
 
+_ALLOWED_COMMANDS = ("run", "check")
+
+
 @dataclass(frozen=True)
 class TaskConfig:
     id: str
     pipeline: str
     depends_on: tuple[str, ...] = field(default_factory=tuple)
+    command: str = "run"
 
 
 @dataclass(frozen=True)
@@ -113,10 +117,24 @@ def _build_workflow(path: Path, raw: dict[str, Any]) -> WorkflowConfig:
         if not isinstance(depends_on_raw, list):
             raise WorkflowParseError(path, f"task[{index}].depends_on must be a list")
         depends_on = tuple(str(x) for x in depends_on_raw)
+        command_raw = item.get("command", "run")
+        if not isinstance(command_raw, str) or command_raw not in _ALLOWED_COMMANDS:
+            raise WorkflowParseError(
+                path,
+                f"task[{index}].command must be one of {list(_ALLOWED_COMMANDS)}, "
+                f"got {command_raw!r}",
+            )
         if task_id in seen_ids:
             raise WorkflowParseError(path, f"duplicate task id: {task_id!r}")
         seen_ids.add(task_id)
-        tasks.append(TaskConfig(id=task_id, pipeline=pipeline, depends_on=depends_on))
+        tasks.append(
+            TaskConfig(
+                id=task_id,
+                pipeline=pipeline,
+                depends_on=depends_on,
+                command=command_raw,
+            )
+        )
 
     for task in tasks:
         for dep in task.depends_on:

@@ -25,9 +25,8 @@ class ApiSettings(BaseSettings):
     worker_namespace: str = DEFAULT_NAMESPACE
     runtime_secret_name: str = DEFAULT_RUNTIME_SECRET_NAME
 
-    table_repo_url_template: str = "https://github.com/{prefix}.git"
-    repo_clone_secret_template: str = "repo-clone-{prefix}"
-    use_repo_clone_secret: bool = False
+    code_pvc_claim: str = "airflow-dags"
+    code_pvc_root: str = "__code__"
 
     upload_timeout_seconds: int = 600
 

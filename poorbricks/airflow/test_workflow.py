@@ -141,6 +141,59 @@ def test_missing_name_rejected(tmp_path: Path) -> None:
         load_workflow(path)
 
 
+def test_task_command_defaults_to_run(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "wf.yaml",
+        """
+        name: solo
+        schedule: "0 * * * *"
+        tasks:
+          - id: a
+            pipeline: postgres:a
+        """,
+    )
+    wf = load_workflow(path)
+    assert wf.tasks[0].command == "run"
+
+
+def test_task_command_check_accepted(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "wf.yaml",
+        """
+        name: with_check
+        schedule: "*/5 * * * *"
+        tasks:
+          - id: a
+            pipeline: gold.patients
+          - id: verify
+            pipeline: gold.patients
+            command: check
+            depends_on: [a]
+        """,
+    )
+    wf = load_workflow(path)
+    assert wf.tasks[1].command == "check"
+
+
+def test_task_command_invalid_rejected(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "wf.yaml",
+        """
+        name: bad_cmd
+        schedule: "0 * * * *"
+        tasks:
+          - id: a
+            pipeline: postgres:a
+            command: dance
+        """,
+    )
+    with pytest.raises(WorkflowParseError, match="command must be one of"):
+        load_workflow(path)
+
+
 def test_load_workflows_directory(tmp_path: Path) -> None:
     _write(
         tmp_path,

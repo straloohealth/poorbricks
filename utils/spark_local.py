@@ -34,6 +34,25 @@ def _ensure_pyspark_env() -> None:
         pass
 
 
+def _discover_extra_jars() -> list[str]:
+    """Find driver jars to add to ``spark.jars`` (e.g., postgres JDBC).
+
+    Looks under ``/opt/spark/jars/`` (where our worker image places them) so
+    Spark sessions running in the container can use ``spark.read.format('jdbc')``
+    against postgres. Returns an empty list locally (CI/dev without the image)
+    so existing test setups keep working.
+    """
+    candidates = ["/opt/spark/jars"]
+    found: list[str] = []
+    for d in candidates:
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if fname.startswith("postgresql-") and fname.endswith(".jar"):
+                found.append(os.path.join(d, fname))
+    return found
+
+
 def build_local_spark(app_name: str = "poorbricks-local") -> SparkSession:
     """Build (or return the active) local SparkSession with poorbricks's
     standard configuration."""
@@ -43,12 +62,17 @@ def build_local_spark(app_name: str = "poorbricks-local") -> SparkSession:
 
     _ensure_pyspark_env()
 
+    extra_jars = _discover_extra_jars()
     config = (
         SparkSession.builder.appName(app_name)
         .master("local[1]")
         .config("spark.sql.adaptive.enabled", "false")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "false")
-        .config(
+    )
+    if extra_jars:
+        config = config.config("spark.jars", ",".join(extra_jars))
+    config = (
+        config.config(
             "spark.sql.warehouse.dir",
             tempfile.mkdtemp(prefix="poorbricks-spark-warehouse-"),
         )

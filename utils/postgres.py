@@ -133,9 +133,13 @@ class PostgresLoader:
                             if str_val == "NaT":
                                 values.append("\\N")
                             else:
-                                # Escape backslashes and newlines
-                                str_val = str_val.replace("\\", "\\\\").replace(
-                                    "\n", "\\n"
+                                # Escape backslashes + characters that would
+                                # collide with COPY TEXT format's TSV framing.
+                                str_val = (
+                                    str_val.replace("\\", "\\\\")
+                                    .replace("\n", "\\n")
+                                    .replace("\r", "\\r")
+                                    .replace("\t", "\\t")
                                 )
                                 values.append(str_val)
                     buffer.write("\t".join(values) + "\n")

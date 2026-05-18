@@ -34,6 +34,7 @@ class SmithUsersInputs(Inputs):
     name=SMITH_USERS_BRONZE_TABLE_NAME,
     model=SmithUserBronze,
     level="bronze",
+    storage="postgres",
     comment=(
         "Mirror of poorbricks_dev.master.patients — the patient-identity "
         "master expanded from mongo_smith.users. Lands in "

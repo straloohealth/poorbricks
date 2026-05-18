@@ -3,14 +3,16 @@
 The generated DAG uses ``KubernetesPodOperator`` for every task. Each
 worker pod:
 
-1. Runs an init container that ``git clone --depth 1`` the table-repo
-   into an ``emptyDir`` shared with the main container, then checks out
-   the pinned SHA.
-2. Starts the main container at ``/workspace`` with ``TABLES_ROOT`` set
-   so ``poorbricks.discovery`` finds the repo's pipelines.
-3. Pulls ``MONGO_URI`` / ``POSTGRES_*`` from a ``Secret`` referenced via
+1. Mounts the shared ``airflow-dags`` PVC at ``/workspace`` with subPath
+   ``__code__/{prefix}/`` — the api-server extracts each uploaded tarball
+   there at upload time, so the worker sees ``/workspace/tables`` and the
+   framework finds pipelines via ``TABLES_ROOT``.
+2. Pulls ``MONGO_URI`` / ``POSTGRES_*`` from a ``Secret`` referenced via
    ``env_from``.
-4. Executes ``poorbricks run --pipeline <key> --mode production``.
+3. Executes ``poorbricks run --pipeline <key> --mode production`` or
+   ``poorbricks check --pipeline <key>`` (see ``TaskConfig.command``).
+4. Lands on the node labeled ``poorbricks.io/dags=true`` so the RWO PVC
+   can attach — same node as the scheduler / dag-processor / api-server.
 """
 
 from __future__ import annotations
@@ -19,11 +21,20 @@ import re
 import textwrap
 from datetime import datetime
 
-from poorbricks.constants import DEFAULT_NAMESPACE, DEFAULT_RUNTIME_SECRET_NAME
+from poorbricks.constants import (
+    DEFAULT_NAMESPACE,
+    DEFAULT_POSTGRES_CREDS_SECRET_NAME,
+    DEFAULT_RUNTIME_SECRET_NAME,
+)
 
 from .workflow import TaskConfig, WorkflowConfig
 
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+DEFAULT_CODE_PVC_CLAIM = "airflow-dags"
+DEFAULT_CODE_PVC_ROOT = "__code__"
+DEFAULT_NODE_SELECTOR_KEY = "poorbricks.io/dags"
+DEFAULT_NODE_SELECTOR_VALUE = "true"
 
 
 def generate_dag_file(
@@ -31,32 +42,39 @@ def generate_dag_file(
     *,
     prefix: str,
     image: str,
-    table_repo_url: str,
-    table_repo_sha: str,
     namespace: str = DEFAULT_NAMESPACE,
     runtime_secret: str = DEFAULT_RUNTIME_SECRET_NAME,
-    repo_clone_secret: str | None = None,
+    postgres_creds_secret: str = DEFAULT_POSTGRES_CREDS_SECRET_NAME,
+    code_pvc_claim: str = DEFAULT_CODE_PVC_CLAIM,
+    code_pvc_root: str = DEFAULT_CODE_PVC_ROOT,
+    node_selector: dict[str, str] | None = None,
     start_year: int | None = None,
 ) -> str:
     """Render Python source for an Airflow DAG.
 
     Args:
         workflow: parsed workflow YAML.
-        prefix: namespacing prefix (typically the table-repo name).
-        image: full image reference for the worker container.
-        table_repo_url: git URL the init container will clone.
-        table_repo_sha: commit SHA the init container will check out.
+        prefix: namespacing prefix (typically the table-repo name); becomes
+            the subPath under ``code_pvc_root`` on the PVC.
+        image: full image reference for the worker container — must have
+            the framework installed; tables come from the PVC mount.
         namespace: K8s namespace the worker pods run in.
         runtime_secret: K8s ``Secret`` exposed via ``env_from`` (e.g.
-            ``MONGO_URI``, ``POSTGRES_*``).
-        repo_clone_secret: optional K8s ``Secret`` with an SSH key for
-            cloning private repos; mounted into the init container at
-            ``/root/.ssh``.
+            ``MONGO_URI``).
+        postgres_creds_secret: K8s ``Secret`` holding VSO-managed postgres
+            credentials; keys ``username`` / ``password`` are mapped to
+            ``POSTGRES_USER`` / ``POSTGRES_PASSWORD`` in every worker pod.
+        code_pvc_claim: PVC name the api-server wrote extracted tables to.
+        code_pvc_root: directory inside the PVC under which the
+            api-server keeps each ``{prefix}/tables`` tree.
+        node_selector: required ``nodeSelector`` so workers land on the
+            same node as the RWO PVC. Defaults to ``poorbricks.io/dags=true``.
         start_year: ``DAG.start_date`` year override (test hook).
     """
     _validate_prefix(prefix)
     dag_id = f"{prefix}__{workflow.name}"
     year = start_year if start_year is not None else datetime.utcnow().year
+    selector = node_selector or {DEFAULT_NODE_SELECTOR_KEY: DEFAULT_NODE_SELECTOR_VALUE}
 
     parts: list[str] = [
         _render_header(),
@@ -67,13 +85,14 @@ def generate_dag_file(
             schedule=workflow.schedule,
             year=year,
             image=image,
-            table_repo_url=table_repo_url,
-            table_repo_sha=table_repo_sha,
             runtime_secret=runtime_secret,
+            postgres_creds_secret=postgres_creds_secret,
+            code_pvc_claim=code_pvc_claim,
+            code_pvc_root=code_pvc_root,
+            node_selector=selector,
         ),
         _render_dag(),
-        _render_init_container(repo_clone_secret),
-        _render_volumes_and_env(repo_clone_secret),
+        _render_volumes_and_env(),
         _render_build_task(),
         _render_tasks(workflow.tasks),
         _render_dependencies(workflow.tasks),
@@ -112,9 +131,11 @@ def _render_constants(
     schedule: str,
     year: int,
     image: str,
-    table_repo_url: str,
-    table_repo_sha: str,
     runtime_secret: str,
+    postgres_creds_secret: str,
+    code_pvc_claim: str,
+    code_pvc_root: str,
+    node_selector: dict[str, str],
 ) -> str:
     return (
         f"DAG_ID = {dag_id!r}\n"
@@ -123,9 +144,11 @@ def _render_constants(
         f"SCHEDULE = {schedule!r}\n"
         f"START_DATE = datetime({year}, 1, 1)\n"
         f"IMAGE = {image!r}\n"
-        f"TABLE_REPO_URL = {table_repo_url!r}\n"
-        f"TABLE_REPO_SHA = {table_repo_sha!r}\n"
         f"RUNTIME_SECRET = {runtime_secret!r}\n"
+        f"POSTGRES_CREDS_SECRET = {postgres_creds_secret!r}\n"
+        f"CODE_PVC_CLAIM = {code_pvc_claim!r}\n"
+        f"CODE_SUBPATH = {f'{code_pvc_root}/{prefix}'!r}\n"
+        f"NODE_SELECTOR = {dict(node_selector)!r}\n"
     )
 
 
@@ -145,106 +168,97 @@ def _render_dag() -> str:
     )
 
 
-def _render_init_container(repo_clone_secret: str | None) -> str:
-    ssh_mount = ""
-    if repo_clone_secret:
-        ssh_mount = textwrap.indent(
-            textwrap.dedent(
-                """\
-                k8s.V1VolumeMount(
-                    name="repo-clone-key",
-                    mount_path="/root/.ssh",
-                    read_only=True,
-                ),
-                """
-            ),
-            "        ",
-        )
+def _render_volumes_and_env() -> str:
     return textwrap.dedent(
         """\
         _CODE_VOLUME = k8s.V1Volume(
             name="code",
-            empty_dir=k8s.V1EmptyDirVolumeSource(),
+            persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+                claim_name=CODE_PVC_CLAIM,
+                read_only=True,
+            ),
         )
 
         _CODE_MOUNT = k8s.V1VolumeMount(
             name="code",
             mount_path="/workspace",
+            sub_path=CODE_SUBPATH,
+            read_only=True,
         )
 
-        _INIT_CONTAINER = k8s.V1Container(
-            name="fetch-code",
-            image="alpine/git:2.43.0",
-            command=["sh", "-c"],
-            args=[
-                "set -e && "
-                "git clone " + TABLE_REPO_URL + " /workspace && "
-                "cd /workspace && "
-                "git checkout " + TABLE_REPO_SHA
-            ],
-            volume_mounts=[
-                k8s.V1VolumeMount(name="code", mount_path="/workspace"),
-        __SSH_MOUNT__    ],
-        )
-        """
-    ).replace("__SSH_MOUNT__", ssh_mount)
+        _VOLUMES = [_CODE_VOLUME]
 
-
-def _render_volumes_and_env(repo_clone_secret: str | None) -> str:
-    if repo_clone_secret:
-        volumes = (
-            "_VOLUMES = [\n"
-            "    _CODE_VOLUME,\n"
-            "    k8s.V1Volume(\n"
-            '        name="repo-clone-key",\n'
-            "        secret=k8s.V1SecretVolumeSource(\n"
-            f"            secret_name={repo_clone_secret!r},\n"
-            "            default_mode=0o400,\n"
-            "        ),\n"
-            "    ),\n"
-            "]\n"
-        )
-    else:
-        volumes = "_VOLUMES = [_CODE_VOLUME]\n"
-    env_block = textwrap.dedent(
-        """\
         _ENV_FROM = [
             k8s.V1EnvFromSource(
                 secret_ref=k8s.V1SecretEnvSource(name=RUNTIME_SECRET),
+            ),
+            k8s.V1EnvFromSource(
+                secret_ref=k8s.V1SecretEnvSource(name=POSTGRES_CREDS_SECRET),
             ),
         ]
 
         _ENV_VARS = [
             k8s.V1EnvVar(name="TABLES_ROOT", value="/workspace/tables"),
+            k8s.V1EnvVar(name="PYTHONPATH", value="/workspace:/app"),
             k8s.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
+            k8s.V1EnvVar(
+                name="POSTGRES_USER",
+                value_from=k8s.V1EnvVarSource(
+                    secret_key_ref=k8s.V1SecretKeySelector(
+                        name=POSTGRES_CREDS_SECRET,
+                        key="username",
+                    )
+                ),
+            ),
+            k8s.V1EnvVar(
+                name="POSTGRES_PASSWORD",
+                value_from=k8s.V1EnvVarSource(
+                    secret_key_ref=k8s.V1SecretKeySelector(
+                        name=POSTGRES_CREDS_SECRET,
+                        key="password",
+                    )
+                ),
+            ),
+            k8s.V1EnvVar(name="POSTGRES_HOST", value="postgresql-rw.storage.svc.cluster.local"),
+            k8s.V1EnvVar(name="POSTGRES_PORT", value="5432"),
+            k8s.V1EnvVar(name="POSTGRES_DB", value="poorbricks"),
         ]
         """
     )
-    return volumes + "\n" + env_block
 
 
 def _render_build_task() -> str:
     return textwrap.dedent(
         """\
-        def _build_task(task_id: str, pipeline_key: str) -> KubernetesPodOperator:
+        _COMMAND_ARGS = {
+            "run": ["run", "--mode", "production"],
+            "check": ["check"],
+        }
+
+
+        def _build_task(
+            task_id: str, pipeline_key: str, command: str
+        ) -> KubernetesPodOperator:
+            base_args = _COMMAND_ARGS[command]
+            arguments = [base_args[0], "--pipeline", pipeline_key, *base_args[1:]]
             return KubernetesPodOperator(
                 task_id=task_id,
                 name=f"{DAG_ID}-{task_id}",
                 namespace=NAMESPACE,
                 image=IMAGE,
                 cmds=["poorbricks"],
-                arguments=["run", "--pipeline", pipeline_key, "--mode", "production"],
-                init_containers=[_INIT_CONTAINER],
+                arguments=arguments,
                 volumes=_VOLUMES,
                 volume_mounts=[_CODE_MOUNT],
                 env_from=_ENV_FROM,
                 env_vars=_ENV_VARS,
+                node_selector=NODE_SELECTOR,
                 get_logs=True,
                 in_cluster=True,
                 on_finish_action="delete_pod",
                 reattach_on_restart=False,
                 do_xcom_push=False,
-                image_pull_policy="IfNotPresent",
+                image_pull_policy="Always",
                 dag=dag,
             )
         """
@@ -253,7 +267,8 @@ def _render_build_task() -> str:
 
 def _render_tasks(tasks: tuple[TaskConfig, ...]) -> str:
     return "\n".join(
-        f"{_task_var(t.id)} = _build_task({t.id!r}, {t.pipeline!r})" for t in tasks
+        f"{_task_var(t.id)} = _build_task({t.id!r}, {t.pipeline!r}, {t.command!r})"
+        for t in tasks
     )
 
 

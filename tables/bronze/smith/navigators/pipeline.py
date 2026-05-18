@@ -34,6 +34,7 @@ class SmithNavigatorsInputs(Inputs):
     name=SMITH_NAVIGATORS_BRONZE_TABLE_NAME,
     model=SmithNavigatorBronze,
     level="bronze",
+    storage="postgres",
     comment=(
         "Mirror of poorbricks_dev.master.navigators — navigator identity "
         "master sourced from mongo_smith.navigators. Lands in "

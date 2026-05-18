@@ -31,21 +31,41 @@ spec:
             - name: POORBRICKS_API_DAGS_DIR
               value: /opt/airflow/dags
             - name: POORBRICKS_API_WORKER_IMAGE
-              value: docker.io/danielspeixoto/databricks:latest
+              value: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
             - name: POORBRICKS_API_WORKER_NAMESPACE
               value: airflow
-            - name: POORBRICKS_API_TABLE_REPO_URL_TEMPLATE
-              value: "https://github.com/{prefix}.git"
+            - name: POORBRICKS_API_CODE_PVC_CLAIM
+              value: airflow-dags
+            - name: POORBRICKS_API_CODE_PVC_ROOT
+              value: __code__
             - name: MONGO_URI
               value: "mongodb://mongo.airflow.svc.cluster.local:27017"
             - name: CONTRACTS_DB
-              value: poorbricks_contracts
+              value: poorbricks
             - name: CONTRACTS_COLLECTION
               value: data_contracts
+            - name: POSTGRES_HOST
+              value: postgresql-rw.storage.svc.cluster.local
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: poorbricks
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-server-postgresql-creds
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-server-postgresql-creds
+                  key: password
           envFrom:
             - secretRef:
                 name: poorbricks-runtime
                 optional: true
+            - secretRef:
+                name: poorbricks-server-postgresql-creds
           resources:
             requests:
               cpu: "500m"

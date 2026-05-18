@@ -127,10 +127,11 @@ def _handle_upload(
             return _fail(str(exc))
 
         dag_store = _build_store(cfg)
-        repo_clone_secret = (
-            cfg.repo_clone_secret_template.format(prefix=prefix)
-            if cfg.use_repo_clone_secret
-            else None
+        _publish_code_to_pvc(
+            tables_dir=tables_dir,
+            dags_dir=Path(cfg.dags_dir),
+            code_root=cfg.code_pvc_root,
+            prefix=prefix,
         )
         dag_names: list[str] = []
         for wf in workflows:
@@ -138,11 +139,10 @@ def _handle_upload(
                 wf,
                 prefix=prefix,
                 image=wf.image or cfg.worker_image,
-                table_repo_url=cfg.table_repo_url_template.format(prefix=prefix),
-                table_repo_sha=sha,
                 namespace=cfg.worker_namespace,
                 runtime_secret=cfg.runtime_secret_name,
-                repo_clone_secret=repo_clone_secret,
+                code_pvc_claim=cfg.code_pvc_claim,
+                code_pvc_root=cfg.code_pvc_root,
             )
             dag_store.put(prefix, wf.name, content)
             dag_names.append(wf.name)
@@ -163,6 +163,39 @@ def _handle_upload(
 
 def _build_store(cfg: ApiSettings) -> DagStore:
     return LocalDagStore(root=Path(cfg.dags_dir))
+
+
+def _publish_code_to_pvc(
+    *, tables_dir: Path, dags_dir: Path, code_root: str, prefix: str
+) -> None:
+    """Atomically swap the extracted ``tables/`` tree into
+    ``{dags_dir}/{code_root}/{prefix}/tables``.
+
+    Worker pods mount the same PVC at ``/workspace`` with the per-prefix
+    subPath, so this is the only code-distribution mechanism workers need.
+
+    The swap is done via ``os.rename`` of two sibling directories under the
+    same code_root so any worker pod starting mid-upload sees either the
+    old code or the new code — never a half-written tree.
+    """
+    import os
+    import shutil
+    import uuid
+
+    code_root_dir = dags_dir / code_root
+    code_root_dir.mkdir(parents=True, exist_ok=True)
+    final_dir = code_root_dir / prefix
+    staging_dir = code_root_dir / f".{prefix}.staging.{uuid.uuid4().hex}"
+    old_dir = code_root_dir / f".{prefix}.old.{uuid.uuid4().hex}"
+
+    staging_dir.mkdir()
+    shutil.copytree(tables_dir, staging_dir / "tables")
+
+    if final_dir.exists():
+        os.rename(final_dir, old_dir)
+    os.rename(staging_dir, final_dir)
+    if old_dir.exists():
+        shutil.rmtree(old_dir, ignore_errors=True)
 
 
 def _extract_safely(payload: bytes, dest: Path) -> None:

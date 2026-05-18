@@ -160,19 +160,7 @@ def _resolve_production_input(
         return get_all(mongo_uri, spec.db, spec.collection, schema=spec.schema)
     if isinstance(spec, ContractSource):
         if spec.table_name not in cache:
-            from .discovery import discover_all_pipelines
-
-            discover_all_pipelines()
-            upstream_meta = _find_pipeline_by_table(spec.table_name)
-            upstream_result = _run_raw(
-                upstream_meta, "production", spark, mongo_uri, cache
-            )
-            if upstream_result.df is None:
-                raise ValueError(
-                    f"ContractSource {spec.table_name!r}: upstream pipeline "
-                    f"produced no output."
-                )
-            cache[spec.table_name] = upstream_result.df
+            cache[spec.table_name] = _read_contract_source(spark, spec.table_name)
         return cache[spec.table_name]
     raise ValueError(
         f"PostgresTableSource {spec.table} is not supported in production mode; "
@@ -186,6 +174,49 @@ def _find_pipeline_by_table(table_name: str) -> PipelineMeta:
         if meta.table_name == table_name:
             return meta
     raise ValueError(f"No pipeline found for table {table_name!r}.")
+
+
+def _read_contract_source(spark: SparkSession, table_name: str) -> DataFrame:
+    """Resolve a ``ContractSource`` by reading the published contract + data
+    rather than re-running the upstream pipeline.
+
+    This is the primitive that makes cross-repo workflows possible: the
+    consumer only needs the contract (schema + storage pointer) in MongoDB
+    and access to the upstream's storage backend. The producer's source
+    code does not need to be present.
+    """
+    from utils.contracts import fetch_contract
+
+    from .settings import settings
+
+    contract = fetch_contract(table_name)
+    if contract is None:
+        raise ValueError(
+            f"ContractSource {table_name!r}: no contract published in "
+            f"{settings.contracts_db}.{settings.contracts_collection}. "
+            f"Run the upstream pipeline first."
+        )
+    storage = contract.get("storage")
+    level = contract.get("level")
+    if storage != "postgres":
+        raise NotImplementedError(
+            f"ContractSource {table_name!r} has storage={storage!r}; only "
+            f"'postgres' is supported as a cross-repo read source."
+        )
+    pg_table = table_name.replace(".", "_")
+    jdbc_url = (
+        f"jdbc:postgresql://{settings.postgres_host}:{settings.postgres_port}"
+        f"/{settings.postgres_db}"
+    )
+    return (
+        spark.read.format("jdbc")
+        .option("url", jdbc_url)
+        .option("dbtable", f'"{level}"."{pg_table}"')
+        .option("user", settings.postgres_user)
+        .option("password", settings.postgres_password)
+        .option("driver", "org.postgresql.Driver")
+        .load()
+    )
 
 
 def _build_production_inputs(
@@ -396,12 +427,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fault", default=None, help="required when --mode=fault")
     args = parser.parse_args(argv)
 
-    result = run(
-        pipeline_key=args.pipeline,
-        mode=args.mode,
-        scenario_name=args.scenario,
-        fault_name=args.fault,
-    )
+    if args.mode == "production":
+        from .persist import run_and_persist
+
+        result = run_and_persist(
+            pipeline_key=args.pipeline,
+            mode=args.mode,
+            scenario_name=args.scenario,
+        )
+    else:
+        result = run(
+            pipeline_key=args.pipeline,
+            mode=args.mode,
+            scenario_name=args.scenario,
+            fault_name=args.fault,
+        )
     if result.errors:
         for err in result.errors:
             print(f"✗ {err}")

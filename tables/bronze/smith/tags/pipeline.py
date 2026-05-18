@@ -38,6 +38,7 @@ class SmithTagsInputs(Inputs):
     name=SMITH_TAGS_BRONZE_TABLE_NAME,
     model=SmithTagBronze,
     level="bronze",
+    storage="postgres",
     comment=(
         "Mirror of mongo_smith.tags — patient-level tag assignments "
         "from the Smith user-store. Lands in analytics.bronze.smith_tags "

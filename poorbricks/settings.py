@@ -15,13 +15,13 @@ class Settings(BaseSettings):
 
     mongo_uri: str = "mongodb://localhost:27017"
     contracts_mongo_uri: str | None = None
-    contracts_db: str = "poorbricks_contracts"
+    contracts_db: str = "poorbricks"
     contracts_collection: str = "data_contracts"
     delta_output_dir: str = "artifacts/delta"
     tables_root: Path = Path("tables")
-    postgres_host: str = "localhost"
+    postgres_host: str = "postgresql-rw.storage.svc.cluster.local"
     postgres_port: int = 5432
-    postgres_db: str = "analytics"
+    postgres_db: str = "poorbricks"
     postgres_user: str = "analytics"
     postgres_password: str = "analytics"
 

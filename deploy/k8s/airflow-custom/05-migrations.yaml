@@ -22,7 +22,10 @@ spec:
         - name: AIRFLOW__CORE__BASE_LOG_FOLDER
           value: /tmp/airflow-logs
         - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-          value: "postgresql://airflow:airflow@airflow-postgresql:5432/airflow"
+          valueFrom:
+            secretKeyRef:
+              name: airflow-postgresql
+              key: connection
         - name: AIRFLOW__CORE__FERNET_KEY
           valueFrom:
             secretKeyRef:

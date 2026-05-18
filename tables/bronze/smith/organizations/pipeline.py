@@ -37,6 +37,7 @@ class SmithOrganizationsInputs(Inputs):
     name=SMITH_ORGANIZATIONS_BRONZE_TABLE_NAME,
     model=SmithOrganizationBronze,
     level="bronze",
+    storage="postgres",
     comment=(
         "Mirror of mongo_smith.organizations — the canonical client / "
         "account org master. Lands in analytics.bronze.smith_organizations "

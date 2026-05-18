@@ -86,18 +86,22 @@ class Expectations:
     _FRESH_AGE_SLACK: int = 3  # tolerate up to 3× FRESH_MAX_AGE_DAYS
 
     @classmethod
-    def check(cls, df: DataFrame) -> list[str]:
+    def check(cls, df: DataFrame, *, enforce_min_rows: bool = True) -> list[str]:
         """Apply every declared expectation to ``df`` and return violations.
 
         Empty list means the table is healthy. Violations are
         human-readable strings; callers may print, log, or fail-build on
         their presence.
+
+        ``enforce_min_rows=False`` skips the ``MIN_ROWS`` check — used by
+        ``verify_ci`` so production-sized floors don't fail upload-time
+        verification against tiny fixture datasets.
         """
         from pyspark.sql import functions as f
 
         violations: list[str] = []
 
-        if cls.MIN_ROWS is not None:
+        if enforce_min_rows and cls.MIN_ROWS is not None:
             actual = df.count()
             effective_min = int(cls.MIN_ROWS * cls._MIN_ROWS_FACTOR)
             if actual < effective_min:
