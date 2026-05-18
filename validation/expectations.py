@@ -196,14 +196,28 @@ def _coerce_to_datetime(value: Any) -> datetime:
 def find_expectations_class(pipeline_key: str) -> type[Expectations] | None:
     """Return the ``Expectations`` subclass declared in a pipeline's config.
 
-    Looks up ``source.pipelines.<pipeline_key>.config`` and walks its module
+    Looks up ``tables.<pipeline_key>.config`` and walks its module
     attributes for the first subclass of ``Expectations``. Returns ``None``
     if none is declared (the pipeline has not yet authored expectations).
+
+    Accepts either the dotted-path form (e.g. ``"bronze.smith.navigators"``)
+    or the registry-key form (``"<storage>:<table>"``). For the registry
+    form, derive the dotted path from the registered meta's module.
     """
     import importlib
     import inspect
 
-    module = importlib.import_module(f"tables.{pipeline_key}.config")
+    if ":" in pipeline_key:
+        from poorbricks.registry import all_pipelines
+
+        meta = all_pipelines().get(pipeline_key)
+        if meta is None:
+            return None
+        config_module = meta.module.removesuffix(".pipeline") + ".config"
+    else:
+        config_module = f"tables.{pipeline_key}.config"
+
+    module = importlib.import_module(config_module)
     for _, obj in inspect.getmembers(module):
         if (
             inspect.isclass(obj)
