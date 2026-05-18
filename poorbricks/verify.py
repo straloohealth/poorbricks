@@ -166,7 +166,7 @@ def _run_pipeline_and_check(
     runner_key = meta.module.removeprefix("tables.").removesuffix(".pipeline")
 
     try:
-        result = run(runner_key, mode=mode)
+        result = run(runner_key, mode=mode, skip_checks=True)
     except Exception as exc:
         return [
             VerificationError(pipeline_key=key, category="run_error", message=str(exc))

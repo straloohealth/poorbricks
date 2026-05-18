@@ -1,0 +1,142 @@
+# helm.sh/hook: pre-upgrade
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-migration
+  namespace: airflow
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+
+      initContainers:
+        - name: migrate-airflow-metadata
+          image: postgres:16-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 70
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+
+              NEW_USER="$(cat /new-creds/username)"
+              NEW_PASS="$(cat /new-creds/password)"
+
+              # Skip if the target DB already has user tables (idempotent).
+              TABLE_COUNT=$(PGPASSWORD="${NEW_PASS}" psql \
+                -h postgresql-rw.storage.svc.cluster.local \
+                -p 5432 \
+                -U "${NEW_USER}" \
+                -d airflow \
+                -At \
+                -c "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" \
+                2>/dev/null || echo "0")
+
+              if [ "${TABLE_COUNT:-0}" -gt 0 ]; then
+                echo "Target airflow DB already has ${TABLE_COUNT} tables — skipping migration."
+                exit 0
+              fi
+
+              echo "Dumping airflow metadata from legacy local postgres..."
+              PGPASSWORD=airflow pg_dump \
+                -h airflow-postgresql \
+                -p 5432 \
+                -U airflow \
+                -d airflow \
+                --no-owner \
+                --no-privileges \
+                -Fc \
+                -f /tmp/airflow-dump.pgc
+
+              echo "Restoring airflow metadata into CNPG cluster..."
+              PGPASSWORD="${NEW_PASS}" pg_restore \
+                -h postgresql-rw.storage.svc.cluster.local \
+                -p 5432 \
+                -U "${NEW_USER}" \
+                -d airflow \
+                --clean \
+                --if-exists \
+                --no-owner \
+                --no-privileges \
+                /tmp/airflow-dump.pgc
+
+              echo "Airflow metadata migration complete."
+          volumeMounts:
+            - name: new-airflow-creds
+              mountPath: /new-creds
+              readOnly: true
+
+      containers:
+        - name: migrate-poorbricks-data
+          image: postgres:16-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 70
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+
+              NEW_USER="$(cat /new-creds/username)"
+              NEW_PASS="$(cat /new-creds/password)"
+
+              # Skip if the target DB already has user tables (idempotent).
+              TABLE_COUNT=$(PGPASSWORD="${NEW_PASS}" psql \
+                -h postgresql-rw.storage.svc.cluster.local \
+                -p 5432 \
+                -U "${NEW_USER}" \
+                -d poorbricks \
+                -At \
+                -c "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" \
+                2>/dev/null || echo "0")
+
+              if [ "${TABLE_COUNT:-0}" -gt 0 ]; then
+                echo "Target poorbricks DB already has ${TABLE_COUNT} tables — skipping migration."
+                exit 0
+              fi
+
+              echo "Dumping poorbricks pipeline data from legacy postgres..."
+              PGPASSWORD=analytics pg_dump \
+                -h postgres.postgres.svc.cluster.local \
+                -p 5432 \
+                -U analytics \
+                -d analytics \
+                --no-owner \
+                --no-privileges \
+                -Fc \
+                -f /tmp/poorbricks-dump.pgc
+
+              echo "Restoring poorbricks data into CNPG cluster..."
+              PGPASSWORD="${NEW_PASS}" pg_restore \
+                -h postgresql-rw.storage.svc.cluster.local \
+                -p 5432 \
+                -U "${NEW_USER}" \
+                -d poorbricks \
+                --clean \
+                --if-exists \
+                --no-owner \
+                --no-privileges \
+                /tmp/poorbricks-dump.pgc
+
+              echo "Poorbricks data migration complete."
+          volumeMounts:
+            - name: new-poorbricks-creds
+              mountPath: /new-creds
+              readOnly: true
+
+      volumes:
+        - name: new-airflow-creds
+          secret:
+            secretName: airflow-postgresql
+        - name: new-poorbricks-creds
+          secret:
+            secretName: poorbricks-server-postgresql-creds
