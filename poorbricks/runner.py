@@ -294,7 +294,12 @@ def _validate_contract_sources(inputs_cls: type[Inputs]) -> list[str]:
     errors: list[str] = []
     for field_name, spec in inputs_cls.sources().items():
         if isinstance(spec, ContractSource):
-            if fetch_contract(spec.table_name) is None:
+            try:
+                result = fetch_contract(spec.table_name)
+                missing = result is None
+            except KeyError:
+                missing = True
+            if missing:
                 errors.append(
                     f"ContractSource '{spec.table_name}' (field '{field_name}') "
                     f"not found in MongoDB — run upstream pipeline first"
@@ -374,7 +379,20 @@ def run(
     _load_dotenv()
     _import_pipeline_module(pipeline_key)
     meta = _resolve_meta(pipeline_key)
+
+    # For registry-key form ("storage:table"), _import_pipeline_module returned early
+    # and skipped the fixtures module. Import it now that we have the module path.
+    if ":" in pipeline_key:
+        _fixtures_mod = meta.module.removesuffix(".pipeline") + ".fixtures"
+        try:
+            importlib.import_module(_fixtures_mod)
+        except ImportError:
+            pass
+
     inputs_cls = meta.inputs_cls
+    # Scenarios are keyed by dotted module path (e.g. "bronze.smith.navigators"),
+    # not by registry key — derive it from meta.module.
+    scenario_key = meta.module.removeprefix("tables.").removesuffix(".pipeline")
 
     # Run architecture and contract-source checks unless skipped
     if not skip_checks:
@@ -402,11 +420,11 @@ def run(
     cache: dict[str, DataFrame] = {}
 
     if mode == "fixtures":
-        inputs = _build_fixtures_inputs(pipeline_key, inputs_cls, scenario_name=None)
+        inputs = _build_fixtures_inputs(scenario_key, inputs_cls, scenario_name=None)
     elif mode == "scenario":
         if scenario_name is None:
             raise ValueError("mode=scenario requires scenario_name.")
-        inputs = _build_fixtures_inputs(pipeline_key, inputs_cls, scenario_name)
+        inputs = _build_fixtures_inputs(scenario_key, inputs_cls, scenario_name)
     elif mode == "production":
         inputs = _build_production_inputs(
             spark, inputs_cls, mongo_uri=mongo_uri, cache=cache
@@ -414,7 +432,7 @@ def run(
     elif mode == "fault":
         if not fault_name:
             raise ValueError("mode=fault requires fault_name.")
-        inputs = _build_fixtures_inputs(pipeline_key, inputs_cls, scenario_name=None)
+        inputs = _build_fixtures_inputs(scenario_key, inputs_cls, scenario_name=None)
         inputs = apply_fault(fault_name, inputs)
     else:
         raise AssertionError(f"unhandled mode {mode!r}")
