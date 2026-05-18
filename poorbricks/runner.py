@@ -72,9 +72,20 @@ def _import_pipeline_module(pipeline_key: str) -> None:
 
 
 def _resolve_meta(pipeline_key: str) -> PipelineMeta:
-    """Find the registered pipeline whose module matches the given dotted key."""
-    target_module = f"tables.{pipeline_key}.pipeline"
+    """Find the registered pipeline for the given key.
+
+    Accepts either:
+    - Registry key form: ``"<storage>:<table_name>"`` (e.g. ``"postgres:dim_patient"``)
+    - Dotted-path form: matches against ``meta.module`` (e.g. ``"silver.dim_patient"``)
+    - Bare table name: ``"dim_patient"`` (falls back to ``get_pipeline``)
+    """
     pipelines = all_pipelines()
+    if ":" in pipeline_key:
+        if pipeline_key in pipelines:
+            return pipelines[pipeline_key]
+        storage, table_name = pipeline_key.split(":", 1)
+        return get_pipeline(table_name, target_storage=storage)
+    target_module = f"tables.{pipeline_key}.pipeline"
     for meta in pipelines.values():
         if meta.module == target_module:
             return meta
