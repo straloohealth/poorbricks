@@ -146,8 +146,20 @@ def scenario(name: str) -> Callable[[_F], _F]:
 
 
 def list_scenarios(pipeline_key: str) -> dict[str, ScenarioFn]:
-    """Return all scenarios for a pipeline, keyed by scenario name."""
-    return dict(_scenarios.get(pipeline_key, {}))
+    """Return all scenarios for a pipeline, keyed by scenario name.
+
+    Accepts either the scenarios-key form (module-path, e.g.
+    ``"bronze.smith.navigators"``) or the registry-key form
+    (``"<storage>:<table>"``, e.g. ``"postgres:smith.navigators"``).
+    For the registry form, derive the scenarios key from the meta's module.
+    """
+    if pipeline_key in _scenarios:
+        return dict(_scenarios[pipeline_key])
+    if ":" in pipeline_key and pipeline_key in _pipelines:
+        meta = _pipelines[pipeline_key]
+        scenarios_key = meta.module.removeprefix("tables.").removesuffix(".pipeline")
+        return dict(_scenarios.get(scenarios_key, {}))
+    return {}
 
 
 __all__ = [
