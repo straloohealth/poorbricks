@@ -148,16 +148,20 @@ def run_and_persist(
         rows = loader.write(result.df, meta.level, _pg_table_name(meta.table_name))
         result.rows = rows
 
-    # Get example rows
+    # Get example rows — fixture failures are non-fatal (contract still publishes)
     if mode == "fixtures":
         example_rows = [r.asDict(recursive=True) for r in result.df.limit(5).collect()]
     else:
-        fixtures_result = run(pipeline_key, mode="fixtures", scenario_name=None)
-        if fixtures_result.df is not None:
-            example_rows = [
-                r.asDict(recursive=True) for r in fixtures_result.df.limit(5).collect()
-            ]
-        else:
+        try:
+            fixtures_result = run(pipeline_key, mode="fixtures", scenario_name=None)
+            if fixtures_result.df is not None:
+                example_rows = [
+                    r.asDict(recursive=True)
+                    for r in fixtures_result.df.limit(5).collect()
+                ]
+            else:
+                example_rows = []
+        except Exception:
             example_rows = []
 
     # Profile and push contract
