@@ -35,36 +35,54 @@ spec:
         - name: AIRFLOW__CORE__BASE_LOG_FOLDER
           value: /tmp/airflow-logs
         - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-          value: "postgresql://airflow:airflow@airflow-postgresql:5432/airflow"
+          valueFrom:
+            secretKeyRef:
+              name: airflow-postgresql
+              key: connection
         - name: AIRFLOW__CORE__FERNET_KEY
           valueFrom:
             secretKeyRef:
               name: airflow-fernet-key
               key: fernet-key
+        - name: AIRFLOW__API_AUTH__JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: jwt-secret
+        - name: AIRFLOW__CORE__AUTH_MANAGER
+          value: airflow.api_fastapi.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+        - name: AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS
+          value: "True"
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /tmp/airflow-logs
+        startupProbe:
+          httpGet:
+            path: /api/v2/monitor/health
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 5
         livenessProbe:
           httpGet:
-            path: /health
+            path: /api/v2/monitor/health
             port: 8080
-          initialDelaySeconds: 30
+          initialDelaySeconds: 0
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /api/v2/monitor/health
             port: 8080
-          initialDelaySeconds: 10
+          initialDelaySeconds: 0
           periodSeconds: 5
         resources:
           requests:
-            cpu: 250m
-            memory: 256Mi
+            cpu: 300m
+            memory: 768Mi
           limits:
-            cpu: 500m
-            memory: 512Mi
+            cpu: 300m
+            memory: 768Mi
       volumes:
       - name: dags
         persistentVolumeClaim:
