@@ -193,7 +193,22 @@ jobs:
       - run:
           name: Authenticate to GCP
           command: |
-            echo "$GOOGLE_SERVICE_ACCOUNT" > /tmp/gcp-sa.json
+            set -e
+            if [ -z "${GOOGLE_SERVICE_ACCOUNT:-}" ]; then
+              echo "GOOGLE_SERVICE_ACCOUNT env var is empty (context 'gke' not attached?)" >&2
+              exit 1
+            fi
+            # The secret is base64-encoded in the gke context (matches the
+            # convention used by other straloo repos that consume it via
+            # tools/inject-file). Fall back to raw if decode fails.
+            if printf '%s' "$GOOGLE_SERVICE_ACCOUNT" | base64 -d > /tmp/gcp-sa.json 2>/dev/null \
+                && python3 -c "import json; json.load(open('/tmp/gcp-sa.json'))" 2>/dev/null; then
+              echo "Decoded base64 service account key."
+            else
+              printf '%s' "$GOOGLE_SERVICE_ACCOUNT" > /tmp/gcp-sa.json
+              python3 -c "import json; json.load(open('/tmp/gcp-sa.json'))"
+              echo "Using raw service account key."
+            fi
             gcloud auth activate-service-account --key-file=/tmp/gcp-sa.json
             gcloud config set project inner-autonomy-371516
       - run:
