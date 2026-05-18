@@ -191,32 +191,25 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Dump GCP-related env var names
-          command: |
-            echo "Env vars matching google/gcp/service/key/cred (names only):"
-            env | awk -F= '{print $1}' \
-              | grep -iE 'google|gcp|service|key|cred|cluster|region' || echo "  (none matched)"
-      - run:
           name: Authenticate to GCP
           command: |
             set -e
-            if [ -z "${GOOGLE_SERVICE_ACCOUNT:-}" ]; then
-              echo "GOOGLE_SERVICE_ACCOUNT env var is empty (context 'gke' not attached?)" >&2
+            if [ -z "${GCLOUD_SERVICE_KEY:-}" ]; then
+              echo "GCLOUD_SERVICE_KEY env var is empty (gke context not attached?)" >&2
               exit 1
             fi
-            # The secret is base64-encoded in the gke context (matches the
-            # convention used by other straloo repos that consume it via
-            # tools/inject-file). Fall back to raw if decode fails.
-            if printf '%s' "$GOOGLE_SERVICE_ACCOUNT" | base64 -d > /tmp/gcp-sa.json 2>/dev/null \
+            # GCLOUD_SERVICE_KEY is the JSON service-account key as provided
+            # by the org-level 'gke' context. Accept either raw JSON or
+            # base64-encoded; gcloud writes a clear error otherwise.
+            if printf '%s' "$GCLOUD_SERVICE_KEY" | base64 -d > /tmp/gcp-sa.json 2>/dev/null \
                 && python3 -c "import json; json.load(open('/tmp/gcp-sa.json'))" 2>/dev/null; then
-              echo "Decoded base64 service account key."
+              :
             else
-              printf '%s' "$GOOGLE_SERVICE_ACCOUNT" > /tmp/gcp-sa.json
+              printf '%s' "$GCLOUD_SERVICE_KEY" > /tmp/gcp-sa.json
               python3 -c "import json; json.load(open('/tmp/gcp-sa.json'))"
-              echo "Using raw service account key."
             fi
             gcloud auth activate-service-account --key-file=/tmp/gcp-sa.json
-            gcloud config set project inner-autonomy-371516
+            gcloud config set project "${GOOGLE_PROJECT_ID:-inner-autonomy-371516}"
       - run:
           name: Submit Cloud Build (api image)
           command: |
