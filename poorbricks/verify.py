@@ -191,9 +191,7 @@ def _run_pipeline_and_check(
 
     expectations_cls = _find_expectations_for(meta)
     if expectations_cls is not None:
-        for violation in expectations_cls.check(  # type: ignore[attr-defined]
-            df, enforce_min_rows=False
-        ):
+        for violation in expectations_cls.check(df):  # type: ignore[attr-defined]
             errors.append(
                 VerificationError(
                     pipeline_key=key, category="expectation", message=violation

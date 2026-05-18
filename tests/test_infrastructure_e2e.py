@@ -12,32 +12,51 @@ from pathlib import Path
 
 import pytest
 
+_GOLD_PIPELINE_YAML = """\
+name: gold_pipeline
+schedule: "0 * * * *"
+tasks:
+  - id: sample_users
+    pipeline: postgres:sample_users
+  - id: gold_patients
+    pipeline: postgres:gold_patients
+    depends_on:
+      - sample_users
+"""
+
+_SIMPLE_WORKFLOW_YAML = """\
+name: simple_workflow
+schedule: "*/5 * * * *"
+tasks:
+  - id: bronze_task
+    pipeline: bronze.smith.users
+"""
+
 
 class TestWorkflowParsing:
     """Workflow YAML parsing and validation."""
 
-    def test_valid_workflow_parses_correctly(self) -> None:
+    def test_valid_workflow_parses_correctly(self, tmp_path: Path) -> None:
         """Verify valid workflow YAML parses without errors."""
         from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists(), "gold_pipeline.yaml not found in table-repo"
+        wf_path = tmp_path / "gold_pipeline.yaml"
+        wf_path.write_text(_GOLD_PIPELINE_YAML)
 
         wf = load_workflow(wf_path)
         assert wf.name == "gold_pipeline"
         assert len(wf.tasks) > 0
 
-    def test_task_dependencies_resolved(self) -> None:
+    def test_task_dependencies_resolved(self, tmp_path: Path) -> None:
         """Verify task dependencies are correctly parsed."""
         from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
+        wf_path = tmp_path / "gold_pipeline.yaml"
+        wf_path.write_text(_GOLD_PIPELINE_YAML)
 
         wf = load_workflow(wf_path)
         assert len(wf.tasks) == 2
 
-        # Verify task IDs and dependencies
         sample_users_task = next((t for t in wf.tasks if t.id == "sample_users"), None)
         gold_patients_task = next(
             (t for t in wf.tasks if t.id == "gold_patients"), None
@@ -49,14 +68,10 @@ class TestWorkflowParsing:
             "gold_patients should depend on sample_users"
         )
 
-    def test_invalid_cron_raises_error(self) -> None:
+    def test_invalid_cron_raises_error(self, tmp_path: Path) -> None:
         """Verify invalid cron expression raises WorkflowParseError."""
-        import tempfile
-        from pathlib import Path
-
         from poorbricks.airflow.workflow import WorkflowParseError, load_workflow
 
-        # Invalid cron: "invalid-cron"
         invalid_yaml = """
 name: test_workflow
 schedule_cron: "invalid-cron"
@@ -64,20 +79,13 @@ tasks:
   - id: task1
     image: test:latest
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(invalid_yaml)
-            f.flush()
-            try:
-                with pytest.raises(WorkflowParseError):
-                    load_workflow(Path(f.name))
-            finally:
-                Path(f.name).unlink()
+        wf_path = tmp_path / "invalid.yaml"
+        wf_path.write_text(invalid_yaml)
+        with pytest.raises(WorkflowParseError):
+            load_workflow(wf_path)
 
-    def test_unknown_depends_on_raises_error(self) -> None:
+    def test_unknown_depends_on_raises_error(self, tmp_path: Path) -> None:
         """Verify referencing unknown task in depends_on raises WorkflowParseError."""
-        import tempfile
-        from pathlib import Path
-
         from poorbricks.airflow.workflow import WorkflowParseError, load_workflow
 
         invalid_yaml = """
@@ -90,20 +98,13 @@ tasks:
     depends_on:
       - unknown_task
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(invalid_yaml)
-            f.flush()
-            try:
-                with pytest.raises(WorkflowParseError):
-                    load_workflow(Path(f.name))
-            finally:
-                Path(f.name).unlink()
+        wf_path = tmp_path / "invalid.yaml"
+        wf_path.write_text(invalid_yaml)
+        with pytest.raises(WorkflowParseError):
+            load_workflow(wf_path)
 
-    def test_duplicate_task_id_raises_error(self) -> None:
+    def test_duplicate_task_id_raises_error(self, tmp_path: Path) -> None:
         """Verify duplicate task IDs raise WorkflowParseError."""
-        import tempfile
-        from pathlib import Path
-
         from poorbricks.airflow.workflow import WorkflowParseError, load_workflow
 
         invalid_yaml = """
@@ -114,21 +115,19 @@ tasks:
   - id: task1
     image: test:latest
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(invalid_yaml)
-            f.flush()
-            try:
-                with pytest.raises(WorkflowParseError):
-                    load_workflow(Path(f.name))
-            finally:
-                Path(f.name).unlink()
+        wf_path = tmp_path / "invalid.yaml"
+        wf_path.write_text(invalid_yaml)
+        with pytest.raises(WorkflowParseError):
+            load_workflow(wf_path)
 
-    def test_load_workflows_from_directory(self) -> None:
+    def test_load_workflows_from_directory(self, tmp_path: Path) -> None:
         """Verify workflows can be discovered and loaded from a directory."""
         from poorbricks.airflow.workflow import load_workflows
 
-        workflows_dir = Path("../table-repo/workflows")
-        assert workflows_dir.exists(), "workflows directory not found"
+        workflows_dir = tmp_path / "workflows"
+        workflows_dir.mkdir()
+        (workflows_dir / "gold_pipeline.yaml").write_text(_GOLD_PIPELINE_YAML)
+        (workflows_dir / "simple_workflow.yaml").write_text(_SIMPLE_WORKFLOW_YAML)
 
         workflows = load_workflows(workflows_dir)
         assert len(workflows) > 0, "No workflows found in directory"
@@ -140,144 +139,116 @@ tasks:
 class TestDagGeneration:
     """DAG file generation and validation."""
 
-    def test_dag_file_is_valid_python(self) -> None:
-        """Verify generated DAG file compiles as valid Python."""
-        from poorbricks.airflow.dag_generator import generate_dag_file
+    def _load_gold_pipeline(self, tmp_path: Path) -> object:
         from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
+        wf_path = tmp_path / "gold_pipeline.yaml"
+        wf_path.write_text(_GOLD_PIPELINE_YAML)
+        return load_workflow(wf_path)
 
-        wf = load_workflow(wf_path)
+    def test_dag_file_is_valid_python(self, tmp_path: Path) -> None:
+        """Verify generated DAG file compiles as valid Python."""
+        from poorbricks.airflow.dag_generator import generate_dag_file
+
+        wf = self._load_gold_pipeline(tmp_path)
         dag_source = generate_dag_file(
-            wf,
+            wf,  # type: ignore[arg-type]
             prefix="test",
             image="test/image:latest",
-            table_repo_url="https://github.com/test.git",
-            table_repo_sha="abc123",
             namespace="test-ns",
             runtime_secret="test-secret",
         )
 
-        # Verify it's valid Python
         compile(dag_source, "<string>", "exec")
 
-    def test_dag_contains_kubernetes_pod_operator(self) -> None:
+    def test_dag_contains_kubernetes_pod_operator(self, tmp_path: Path) -> None:
         """Verify DAG contains KubernetesPodOperator definitions."""
         from poorbricks.airflow.dag_generator import generate_dag_file
-        from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
-
-        wf = load_workflow(wf_path)
+        wf = self._load_gold_pipeline(tmp_path)
         dag_source = generate_dag_file(
-            wf,
+            wf,  # type: ignore[arg-type]
             prefix="test",
             image="test/image:latest",
-            table_repo_url="https://github.com/test.git",
-            table_repo_sha="abc123",
             namespace="test-ns",
             runtime_secret="test-secret",
         )
 
         assert "KubernetesPodOperator" in dag_source
 
-    def test_dag_id_includes_prefix(self) -> None:
+    def test_dag_id_includes_prefix(self, tmp_path: Path) -> None:
         """Verify DAG ID follows {prefix}__{workflow.name} format."""
         from poorbricks.airflow.dag_generator import generate_dag_file
-        from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
-
-        wf = load_workflow(wf_path)
+        wf = self._load_gold_pipeline(tmp_path)
         prefix = "myprefix"
         dag_source = generate_dag_file(
-            wf,
+            wf,  # type: ignore[arg-type]
             prefix=prefix,
             image="test/image:latest",
-            table_repo_url="https://github.com/test.git",
-            table_repo_sha="abc123",
             namespace="test-ns",
             runtime_secret="test-secret",
         )
 
-        expected_dag_id = f"{prefix}__{wf.name}"
-        # Check for DAG_ID variable assignment
+        expected_dag_id = f"{prefix}__{wf.name}"  # type: ignore[attr-defined]
         assert (
             f"DAG_ID = '{expected_dag_id}'" in dag_source
             or f'DAG_ID = "{expected_dag_id}"' in dag_source
         )
 
-    def test_task_dependency_wired_correctly(self) -> None:
+    def test_task_dependency_wired_correctly(self, tmp_path: Path) -> None:
         """Verify task dependencies are wired in DAG Python code (>> operator)."""
         from poorbricks.airflow.dag_generator import generate_dag_file
-        from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
-
-        wf = load_workflow(wf_path)
+        wf = self._load_gold_pipeline(tmp_path)
         dag_source = generate_dag_file(
-            wf,
+            wf,  # type: ignore[arg-type]
             prefix="test",
             image="test/image:latest",
-            table_repo_url="https://github.com/test.git",
-            table_repo_sha="abc123",
             namespace="test-ns",
             runtime_secret="test-secret",
         )
 
-        # Verify >> operator for task dependencies
         assert ">>" in dag_source, "No task dependencies (>>) found in DAG"
 
-    def test_init_container_git_clone_present(self) -> None:
-        """Verify init container for git clone is included in KubernetesPodOperator."""
+    def test_dag_uses_pvc_code_mount(self, tmp_path: Path) -> None:
+        """Verify DAG uses PVC subpath mount for code, not an init container."""
         from poorbricks.airflow.dag_generator import generate_dag_file
-        from poorbricks.airflow.workflow import load_workflow
 
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
-
-        wf = load_workflow(wf_path)
+        wf = self._load_gold_pipeline(tmp_path)
         dag_source = generate_dag_file(
-            wf,
-            prefix="test",
+            wf,  # type: ignore[arg-type]
+            prefix="myrepo",
             image="test/image:latest",
-            table_repo_url="https://github.com/test.git",
-            table_repo_sha="abc123",
             namespace="test-ns",
             runtime_secret="test-secret",
         )
 
-        # Verify init container references git clone
-        assert "init_containers" in dag_source or "initContainers" in dag_source
-        assert "git clone" in dag_source or "git" in dag_source
-
-    def test_ssh_secret_volume_added_when_set(self) -> None:
-        """Verify SSH secret volume is added when repo_clone_secret is provided."""
-        from poorbricks.airflow.dag_generator import generate_dag_file
-        from poorbricks.airflow.workflow import load_workflow
-
-        wf_path = Path("../table-repo/workflows/gold_pipeline.yaml")
-        assert wf_path.exists()
-
-        wf = load_workflow(wf_path)
-        secret_name = "my-ssh-secret"
-        dag_source = generate_dag_file(
-            wf,
-            prefix="test",
-            image="test/image:latest",
-            table_repo_url="https://github.com/test.git",
-            table_repo_sha="abc123",
-            namespace="test-ns",
-            runtime_secret="test-secret",
-            repo_clone_secret=secret_name,
+        assert "CODE_PVC_CLAIM" in dag_source, "DAG must reference CODE_PVC_CLAIM"
+        assert "CODE_SUBPATH" in dag_source, "DAG must reference CODE_SUBPATH"
+        assert "__code__/myrepo" in dag_source, "subpath must include prefix"
+        assert "init_containers" not in dag_source, (
+            "DAG must not use init containers for code access (PVC approach)"
         )
 
-        # Verify secret is referenced in the DAG
-        assert secret_name in dag_source, f"SSH secret '{secret_name}' not found in DAG"
+    def test_dag_includes_postgres_creds_secret(self, tmp_path: Path) -> None:
+        """Verify DAG env_from includes the postgres credentials secret."""
+        from poorbricks.airflow.dag_generator import generate_dag_file
+
+        wf = self._load_gold_pipeline(tmp_path)
+        dag_source = generate_dag_file(
+            wf,  # type: ignore[arg-type]
+            prefix="test",
+            image="test/image:latest",
+            namespace="test-ns",
+            runtime_secret="my-runtime-secret",
+            postgres_creds_secret="my-pg-creds",
+        )
+
+        assert "POSTGRES_CREDS_SECRET" in dag_source
+        assert "my-pg-creds" in dag_source
+        assert "POSTGRES_USER" in dag_source
+        assert "POSTGRES_PASSWORD" in dag_source
 
 
 class TestWorkerPodDagAccess:
@@ -306,13 +277,11 @@ class TestWorkerPodDagAccess:
         assert tmpl["kind"] == "Pod"
         assert tmpl["spec"]["serviceAccountName"] == "airflow"
 
-        # Must NOT have init containers (no gsutil fetch-dags)
         init_containers = tmpl["spec"].get("initContainers", [])
         assert len(init_containers) == 0, (
             "pod_template must not have initContainers (no GCS fetch-dags)"
         )
 
-        # Must have a PVC volume named 'dags'
         volumes = {v["name"]: v for v in tmpl["spec"]["volumes"]}
         assert "dags" in volumes, "Missing 'dags' volume"
         assert "persistentVolumeClaim" in volumes["dags"], (
@@ -322,7 +291,6 @@ class TestWorkerPodDagAccess:
             volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
         ), "PVC claim must be named 'airflow-dags'"
 
-        # Base container must mount the PVC at /opt/airflow/dags (read-only)
         containers = tmpl["spec"]["containers"]
         base = next((c for c in containers if c["name"] == "base"), None)
         assert base is not None, "No container named 'base'"
@@ -361,14 +329,7 @@ class TestWorkerPodDagAccess:
             )
 
     def test_no_cross_namespace_rbac_needed(self) -> None:
-        """Single-namespace architecture eliminates need for cross-namespace RBAC.
-
-        All pods (scheduler, dag-processor, workers, API, MongoDB) are in the
-        airflow namespace, so the airflow ServiceAccount has native permissions
-        to spawn ephemeral worker pods without additional RoleBindings.
-        """
-        from pathlib import Path
-
+        """Single-namespace architecture eliminates need for cross-namespace RBAC."""
         rbac_path = Path("deploy/k8s/workers/rbac.yaml")
         assert not rbac_path.exists(), (
             "deploy/k8s/workers/rbac.yaml should be deleted in single-namespace architecture"
@@ -415,12 +376,10 @@ class TestDeploymentManifests:
         api = yaml.safe_load(api_path.read_text())
         assert api["kind"] == "Deployment"
 
-        # Find the api container
         containers = api["spec"]["template"]["spec"]["containers"]
         server = next((c for c in containers if c["name"] == "api"), None)
         assert server is not None, "No api container found"
 
-        # Check env vars
         env_dict = {e["name"]: e.get("value") for e in server.get("env", [])}
         assert env_dict.get("POORBRICKS_API_DAG_STORE") == "local", (
             "POORBRICKS_API_DAG_STORE must be 'local'"
@@ -432,14 +391,12 @@ class TestDeploymentManifests:
             "POORBRICKS_API_DAGS_DIR must point to /opt/airflow/dags (PVC mount)"
         )
 
-        # Check volume mount
         vol_mounts = {m["name"]: m for m in server.get("volumeMounts", [])}
         assert "dags" in vol_mounts, (
             "poorbricks-server container must mount 'dags' volume"
         )
         assert vol_mounts["dags"]["mountPath"] == "/opt/airflow/dags"
 
-        # Check volume definition in pod spec
         volumes = {v["name"]: v for v in api["spec"]["template"]["spec"]["volumes"]}
         assert "dags" in volumes, "Pod spec must define 'dags' volume"
         assert "persistentVolumeClaim" in volumes["dags"], (
@@ -448,10 +405,7 @@ class TestDeploymentManifests:
         assert volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
 
     def test_api_ingress_uses_tailscale(self) -> None:
-        """deploy/k8s/api/ingress.yaml must define Tailscale Ingress.
-
-        Exposes poorbricks-server API on Tailscale VPN at /health and /v1/upload.
-        """
+        """deploy/k8s/api/ingress.yaml must define Tailscale Ingress."""
         import yaml
 
         ingress_path = Path("deploy/k8s/api/ingress.yaml")
@@ -467,7 +421,6 @@ class TestDeploymentManifests:
             "Ingress must use ingressClassName: tailscale (VPN exposure)"
         )
 
-        # Verify backend service
         rules = spec.get("rules", [])
         assert len(rules) > 0, "Ingress must have rules"
 
@@ -489,6 +442,5 @@ class TestDeploymentManifests:
         deploy_script = Path("scripts/deploy_k8s.sh")
         assert deploy_script.exists(), "scripts/deploy_k8s.sh not found"
 
-        # Check executable permission
         mode = deploy_script.stat().st_mode
         assert mode & stat.S_IXUSR, "scripts/deploy_k8s.sh must be executable"

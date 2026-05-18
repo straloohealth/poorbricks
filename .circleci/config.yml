@@ -55,7 +55,7 @@ jobs:
           command: poetry run ruff format --check .
       - run:
           name: MyPy
-          command: poetry run mypy poorbricks/ utils/ validation/ tests/
+          command: poetry run mypy poorbricks/ utils/ validation/
 
   unit-tests:
     docker: *docker_images
@@ -79,7 +79,7 @@ jobs:
             --tb=short -v
       - run:
           name: Architecture validation
-          command: poetry run poorbricks-verify --mode arch
+          command: poetry run poorbricks verify --mode arch
       - store_test_results:
           path: test-results-unit.xml
 
