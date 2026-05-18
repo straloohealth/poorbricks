@@ -23,31 +23,31 @@ def _resolve_dot_key(doc: dict[str, Any], key: str) -> Any:
     return value
 
 
+def _sanitize_value(v: Any) -> Any:
+    """Recursively convert BSON types to Python-native equivalents for PySpark compatibility."""
+    from bson import Decimal128, ObjectId
+    from bson.int64 import Int64
+
+    if isinstance(v, ObjectId):
+        return str(v)
+    if isinstance(v, Int64):
+        return int(v)
+    if isinstance(v, Decimal128):
+        return float(v.to_decimal())
+    if isinstance(v, dict):
+        return {dk: _sanitize_value(dv) for dk, dv in v.items()}
+    if isinstance(v, list):
+        return [_sanitize_value(item) for item in v]
+    return v
+
+
 def _sanitize_bson_types(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert BSON types that Razorvine pickle cannot serialize to Python-native equivalents.
+    """Convert BSON types to Python-native equivalents for PySpark compatibility.
 
-    bson.ObjectId serialization causes PickleException in local PySpark mode.
-    All ObjectId values in any field are converted to their hex string representation.
+    Handles ObjectId → str, Int64 → int, Decimal128 → float, and recurses into
+    nested dicts and lists at any depth.
     """
-    from bson import ObjectId
-
-    if not rows:
-        return rows
-    sanitized = []
-    for doc in rows:
-        clean: dict[str, Any] = {}
-        for k, v in doc.items():
-            if isinstance(v, ObjectId):
-                clean[k] = str(v)
-            elif isinstance(v, dict):
-                clean[k] = {
-                    dk: str(dv) if isinstance(dv, ObjectId) else dv
-                    for dk, dv in v.items()
-                }
-            else:
-                clean[k] = v
-        sanitized.append(clean)
-    return sanitized
+    return [{k: _sanitize_value(v) for k, v in doc.items()} for doc in rows]
 
 
 def get_all(
