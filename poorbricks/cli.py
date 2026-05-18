@@ -43,20 +43,20 @@ def main(argv: list[str] | None = None) -> int:
     command, rest = args[0], args[1:]
 
     if command == "verify":
-        from poorbricks.verify import main as verify_main
+        from .verify import main as verify_main
 
         verify_main(rest)  # exits via sys.exit on its own
         return 0
     if command == "run":
-        from poorbricks.runner import main as run_main
+        from .runner import main as run_main
 
         return run_main(rest)
     if command == "check":
-        from poorbricks.check import main as check_main
+        from .check import main as check_main
 
         return check_main(rest)
     if command == "upload":
-        from poorbricks.upload_client import main as upload_main
+        from .upload_client import main as upload_main
 
         return upload_main(rest)
 
