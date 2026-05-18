@@ -16,7 +16,7 @@ from validation import (
     ValidationRule,
 )
 
-SMITH_NAVIGATORS_BRONZE_TABLE_NAME = "smith.navigators"
+SMITH_NAVIGATORS_BRONZE_TABLE_NAME = "smith_navigators"
 
 
 class SmithNavigatorBronze(ValidatedStruct):

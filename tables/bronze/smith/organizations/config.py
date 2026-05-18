@@ -19,7 +19,7 @@ from validation import (
     ValidationRule,
 )
 
-SMITH_ORGANIZATIONS_BRONZE_TABLE_NAME = "smith.organizations"
+SMITH_ORGANIZATIONS_BRONZE_TABLE_NAME = "smith_organizations"
 
 
 class SmithOrganizationBronze(ValidatedStruct):

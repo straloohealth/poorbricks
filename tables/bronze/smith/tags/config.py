@@ -16,7 +16,7 @@ from validation import (
     ValidationRule,
 )
 
-SMITH_TAGS_BRONZE_TABLE_NAME = "smith.tags"
+SMITH_TAGS_BRONZE_TABLE_NAME = "smith_tags"
 
 
 class SmithTagBronze(ValidatedStruct):

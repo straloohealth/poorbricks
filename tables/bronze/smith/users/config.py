@@ -16,7 +16,7 @@ from validation import (
     ValidationRule,
 )
 
-SMITH_USERS_BRONZE_TABLE_NAME = "smith.users"
+SMITH_USERS_BRONZE_TABLE_NAME = "smith_users"
 
 
 class ExtraField(BaseModel):
