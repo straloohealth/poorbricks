@@ -23,6 +23,33 @@ def _resolve_dot_key(doc: dict[str, Any], key: str) -> Any:
     return value
 
 
+def _sanitize_bson_types(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert BSON types that Razorvine pickle cannot serialize to Python-native equivalents.
+
+    bson.ObjectId serialization causes PickleException in local PySpark mode.
+    All ObjectId values in any field are converted to their hex string representation.
+    """
+    from bson import ObjectId
+
+    if not rows:
+        return rows
+    sanitized = []
+    for doc in rows:
+        clean: dict[str, Any] = {}
+        for k, v in doc.items():
+            if isinstance(v, ObjectId):
+                clean[k] = str(v)
+            elif isinstance(v, dict):
+                clean[k] = {
+                    dk: str(dv) if isinstance(dv, ObjectId) else dv
+                    for dk, dv in v.items()
+                }
+            else:
+                clean[k] = v
+        sanitized.append(clean)
+    return sanitized
+
+
 def get_all(
     mongo_uri: str,
     db_name: str,
@@ -72,4 +99,5 @@ def get_all(
                 mapped_rows.append(mapped_doc)
             rows = mapped_rows
 
+    rows = _sanitize_bson_types(rows)
     return spark.createDataFrame(rows, schema=schema)
