@@ -1,0 +1,5 @@
+name: bronze
+schedule: "*/5 * * * *"
+tasks:
+  - id: smith_users
+    pipeline: bronze.smith.users

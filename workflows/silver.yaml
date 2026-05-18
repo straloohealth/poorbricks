@@ -1,0 +1,5 @@
+name: silver
+schedule: "*/5 * * * *"
+tasks:
+  - id: dim_patient
+    pipeline: silver.dim_patient
