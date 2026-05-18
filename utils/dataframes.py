@@ -189,7 +189,7 @@ def create_dataframe(
 
     ordered_data = []
     for row in list_data:
-        ordered_row = {col: row[col] for col in target_columns}
+        ordered_row = {col: row.get(col) for col in target_columns}
         ordered_data.append(ordered_row)
 
     return spark.createDataFrame(data=ordered_data, schema=target_schema)
