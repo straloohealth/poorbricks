@@ -1,0 +1,20 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:$SHORT_SHA
+      - -t
+      - us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+      - -f
+      - api/Dockerfile
+      - .
+
+images:
+  - us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:$SHORT_SHA
+  - us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+
+timeout: 1800s
+
+options:
+  logging: CLOUD_LOGGING_ONLY

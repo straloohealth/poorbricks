@@ -184,6 +184,27 @@ jobs:
       - store_test_results:
           path: test-results-workflow.xml
 
+  image-release:
+    docker:
+      - image: google/cloud-sdk:slim
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Authenticate to GCP
+          command: |
+            echo "$GOOGLE_SERVICE_ACCOUNT" > /tmp/gcp-sa.json
+            gcloud auth activate-service-account --key-file=/tmp/gcp-sa.json
+            gcloud config set project inner-autonomy-371516
+      - run:
+          name: Submit Cloud Build (api image)
+          command: |
+            gcloud builds submit \
+              --config=cloudbuild.yaml \
+              --substitutions=SHORT_SHA="${CIRCLE_SHA1:0:7}" \
+              .
+          no_output_timeout: 30m
+
 # ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
   test:
@@ -214,3 +235,11 @@ workflows:
           requires: [lint-and-type-check]
       - integration-tests:
           requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
+
+  image-release:
+    when:
+      equal: [main, << pipeline.git.branch >>]
+    jobs:
+      - image-release:
+          context:
+            - gke
