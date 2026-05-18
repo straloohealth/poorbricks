@@ -168,7 +168,27 @@ def run_and_persist(
     from utils.contracts import profile_dataframe, push_contract
     from validation.expectations import find_expectations_class
 
-    profile = profile_dataframe(result.df)
+    try:
+        profile = profile_dataframe(result.df)
+    except Exception:
+        import os
+
+        import psycopg2
+
+        pg_table = _pg_table_name(meta.table_name)
+        conn = psycopg2.connect(
+            host=os.environ["POSTGRES_HOST"],
+            port=int(os.environ.get("POSTGRES_PORT", 5432)),
+            dbname=os.environ["POSTGRES_DB"],
+            user=os.environ["POSTGRES_USER"],
+            password=os.environ["POSTGRES_PASSWORD"],
+        )
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM {meta.level}.{pg_table}")
+        row = cur.fetchone()
+        row_count = row[0] if row is not None else 0
+        conn.close()
+        profile = {"row_count": row_count, "null_rates": {}, "enum_samples": {}}
     schema = meta.model.to_struct()  # type: ignore[attr-defined]
     schema_json = schema.jsonValue()
 
