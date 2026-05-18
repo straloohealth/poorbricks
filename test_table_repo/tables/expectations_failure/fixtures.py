@@ -1,4 +1,4 @@
-"""Fixtures producing a small DataFrame — guaranteed under MIN_ROWS."""
+"""Fixtures producing a DataFrame that violates UNIQUE_KEYS."""
 
 from __future__ import annotations
 
@@ -8,5 +8,5 @@ from tables.expectations_failure.pipeline import ExpectationsFailureInputs
 
 @scenario("nominal")
 def nominal() -> ExpectationsFailureInputs:
-    rows = [{"user_id": "u1"}, {"user_id": "u2"}]
+    rows = [{"user_id": "u1"}, {"user_id": "u1"}]
     return ExpectationsFailureInputs.from_rows({"upstream": rows})

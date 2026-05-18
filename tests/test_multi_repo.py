@@ -180,7 +180,12 @@ def _patch_fetch_contract(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_verify_ci_expectations_failure_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """MIN_ROWS=999_999 vs. fixture (2 rows) — expectation violation."""
+    """Duplicate user_id rows violate UNIQUE_KEYS — expectation violation.
+
+    MIN_ROWS is intentionally bypassed in verify_ci (enforce_min_rows=False),
+    so the fixture instead trips UNIQUE_KEYS to exercise the expectation
+    error path.
+    """
     from poorbricks.verify import verify_ci
 
     _patch_fetch_contract(monkeypatch)
@@ -188,7 +193,7 @@ def test_verify_ci_expectations_failure_fails(monkeypatch: pytest.MonkeyPatch) -
     matching = [e for e in errors if e.pipeline_key == "postgres:expectations_failure"]
     assert matching, "expectations_failure must produce an error"
     assert any(
-        e.category == "expectation" and "MIN_ROWS" in e.message for e in matching
+        e.category == "expectation" and "UNIQUE_KEYS" in e.message for e in matching
     ), matching
 
 
