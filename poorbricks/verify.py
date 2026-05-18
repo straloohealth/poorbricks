@@ -214,8 +214,6 @@ def _find_expectations_for(meta: PipelineMeta) -> type | None:
     import importlib
     import inspect
 
-    from validation.expectations import Expectations
-
     config_module_path = meta.module.removesuffix(".pipeline") + ".config"
     try:
         module = importlib.import_module(config_module_path)
@@ -224,8 +222,8 @@ def _find_expectations_for(meta: PipelineMeta) -> type | None:
     for _, obj in inspect.getmembers(module):
         if (
             inspect.isclass(obj)
-            and issubclass(obj, Expectations)
-            and obj is not Expectations
+            and obj.__name__ != "Expectations"
+            and any(base.__name__ == "Expectations" for base in obj.__mro__[1:])
         ):
             return obj
     return None
