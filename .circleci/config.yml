@@ -191,6 +191,12 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Dump GCP-related env var names
+          command: |
+            echo "Env vars matching google/gcp/service/key/cred (names only):"
+            env | awk -F= '{print $1}' \
+              | grep -iE 'google|gcp|service|key|cred|cluster|region' || echo "  (none matched)"
+      - run:
           name: Authenticate to GCP
           command: |
             set -e
