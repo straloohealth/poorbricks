@@ -55,7 +55,14 @@ class RunResult:
 
 
 def _import_pipeline_module(pipeline_key: str) -> None:
-    """Import the pipeline + its fixtures so registry decorators run."""
+    """Import the pipeline + its fixtures so registry decorators run.
+
+    Registry-key form (``"<storage>:<table>"``) is skipped: the colon means
+    the module was already discovered (otherwise the registry would not
+    have the entry) and is not a valid dotted import path.
+    """
+    if ":" in pipeline_key:
+        return
     base = f"tables.{pipeline_key}"
     importlib.import_module(f"{base}.pipeline")
     try:
