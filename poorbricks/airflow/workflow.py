@@ -9,7 +9,7 @@ Schema (locked — established by ``test_table_repo/workflows/test_workflow.yaml
 .. code-block:: yaml
 
     name: gold_patients
-    schedule: "0 2 * * *"
+    schedule: "0 2 * * *"   # cron, or "manual" for trigger-only DAGs
     # image: optional — defaults to constants.DEFAULT_WORKER_IMAGE
 
     tasks:
@@ -53,7 +53,7 @@ class TaskConfig:
 @dataclass(frozen=True)
 class WorkflowConfig:
     name: str
-    schedule: str
+    schedule: str | None  # None → manual-trigger-only DAG (schedule: manual in YAML)
     tasks: tuple[TaskConfig, ...]
     image: str | None = None
 
@@ -90,9 +90,13 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 def _build_workflow(path: Path, raw: dict[str, Any]) -> WorkflowConfig:
     name = _required_str(path, raw, "name")
-    schedule = _required_str(path, raw, "schedule")
-    if not croniter.is_valid(schedule):
-        raise WorkflowParseError(path, f"invalid cron expression: {schedule!r}")
+    schedule_raw = _required_str(path, raw, "schedule")
+    if schedule_raw.strip().lower() == "manual":
+        schedule: str | None = None
+    elif croniter.is_valid(schedule_raw):
+        schedule = schedule_raw
+    else:
+        raise WorkflowParseError(path, f"invalid cron expression: {schedule_raw!r}")
     image_raw = raw.get("image")
     image: str | None
     if image_raw is None:

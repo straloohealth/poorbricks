@@ -128,7 +128,7 @@ def _render_constants(
     dag_id: str,
     prefix: str,
     namespace: str,
-    schedule: str,
+    schedule: str | None,
     year: int,
     image: str,
     runtime_secret: str,
@@ -141,7 +141,7 @@ def _render_constants(
         f"DAG_ID = {dag_id!r}\n"
         f"PREFIX = {prefix!r}\n"
         f"NAMESPACE = {namespace!r}\n"
-        f"SCHEDULE = {schedule!r}\n"
+        f"SCHEDULE = {schedule!r}  # None = manual trigger only\n"
         f"START_DATE = datetime({year}, 1, 1)\n"
         f"IMAGE = {image!r}\n"
         f"RUNTIME_SECRET = {runtime_secret!r}\n"

@@ -61,6 +61,22 @@ def test_load_workflow_with_dependencies(tmp_path: Path) -> None:
     assert wf.tasks[1].depends_on == ("a",)
 
 
+def test_load_workflow_manual_schedule(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "wf.yaml",
+        """
+        name: manual_dag
+        schedule: manual
+        tasks:
+          - id: t
+            pipeline: postgres:t
+        """,
+    )
+    wf = load_workflow(path)
+    assert wf.schedule is None
+
+
 def test_invalid_cron_rejected(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
