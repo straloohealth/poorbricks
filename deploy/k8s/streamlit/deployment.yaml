@@ -34,8 +34,19 @@ spec:
             - containerPort: 8501
               name: http
           env:
+            # Atlas connection string (with dynamic read-only credentials)
+            # synced from Vault by the Vault Secrets Operator. CONTRACTS_MONGO
+            # _URI is what the contracts store reads; MONGO_URI is the fallback.
             - name: MONGO_URI
-              value: "mongodb://mongo.airflow.svc.cluster.local:27017"
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-streamlit-mongodb-creds
+                  key: MONGO_URI
+            - name: CONTRACTS_MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-streamlit-mongodb-creds
+                  key: MONGO_URI
             - name: CONTRACTS_DB
               value: poorbricks
             - name: CONTRACTS_COLLECTION
