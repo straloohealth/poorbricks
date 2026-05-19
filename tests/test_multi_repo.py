@@ -100,7 +100,6 @@ def _dim_patient_contract() -> dict[str, Any]:
             StructField("created_at", TimestampType(), nullable=False),
             StructField("origin_slug", StringType(), nullable=True),
             StructField("is_active", BooleanType(), nullable=False),
-            StructField("is_deleted", BooleanType(), nullable=False),
             StructField("is_high_risk", BooleanType(), nullable=False),
             StructField("is_surgical", BooleanType(), nullable=False),
         ]

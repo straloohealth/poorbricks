@@ -26,7 +26,6 @@ def smoke() -> PatientsGoldInputs:
                     "created_at": NOW,
                     "origin_slug": "rede_sc",
                     "is_active": True,
-                    "is_deleted": False,
                     "is_high_risk": False,
                     "is_surgical": True,
                 }

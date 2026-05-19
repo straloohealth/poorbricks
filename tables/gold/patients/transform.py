@@ -29,7 +29,6 @@ def compute(inputs: PatientsGoldInputs) -> DataFrame:
         f.col("birth_date"),
         f.col("origin_slug"),
         f.col("is_active"),
-        f.col("is_deleted"),
         f.col("is_high_risk"),
         f.col("is_surgical"),
         f.col("created_at"),

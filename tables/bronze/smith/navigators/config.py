@@ -48,12 +48,6 @@ class SmithNavigatorBronze(ValidatedStruct):
     groups: list[str] | None = Field(
         description="Permission groups the navigator belongs to (admin / navigator / dashviewer)."
     )
-    fivetran_synced: datetime | None = Field(
-        default=None, description="Timestamp of the last Fivetran sync for this row."
-    )
-    fivetran_deleted: bool | None = Field(
-        default=None, description="True if the row was soft-deleted by Fivetran."
-    )
 
     @classmethod
     def rules(cls) -> list[ValidationRule]:

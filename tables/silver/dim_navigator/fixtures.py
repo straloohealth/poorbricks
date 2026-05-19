@@ -29,8 +29,6 @@ def _nav(
         "phone": None,
         "org": None,
         "groups": None,
-        "fivetran_synced": None,
-        "fivetran_deleted": None,
     }
 
 

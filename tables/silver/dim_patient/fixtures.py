@@ -1,12 +1,4 @@
-"""Scenarios for verifying silver.dim_patient locally.
-
-Fixture rows mirror the canonical ``bronze.smith_users`` shape
-(``patient_id, external_id, origin, active, created_at, gender,
-birth_date, extra_fields, fivetran_synced, fivetran_deleted``). The
-transform null-pads silver-only columns (name/email/phone/is_high_risk
-/is_surgical) until bronze grows them, so this fixture file does not
-attempt to set them — they don't exist on the input.
-"""
+"""Scenarios for verifying silver.dim_patient locally."""
 
 from __future__ import annotations
 
@@ -27,7 +19,6 @@ def _user(
     mongo_id: str = "507f1f77bcf86cd799439011",
     external_id: str | None = None,
     active: bool = True,
-    fivetran_deleted: bool | None = None,
     created_at: datetime = _NOW,
     origin: str | None = "aon",
 ) -> dict:
@@ -45,8 +36,6 @@ def _user(
         "birth_date": datetime(1990, 5, 20, 0, 0, 0),
         "cpf": None,
         "extraFields": None,
-        "fivetran_synced": None,
-        "fivetran_deleted": fivetran_deleted,
     }
 
 

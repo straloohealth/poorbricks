@@ -58,12 +58,6 @@ class SmithUserBronze(ValidatedStruct):
     extraFields: list[ExtraField] | None = Field(
         description="Additional fields from the patient profile."
     )
-    fivetran_synced: datetime | None = Field(
-        default=None, description="Timestamp of the last Fivetran sync for this row."
-    )
-    fivetran_deleted: bool | None = Field(
-        default=None, description="True if the row was soft-deleted by Fivetran."
-    )
 
     @classmethod
     def rules(cls) -> list[ValidationRule]:

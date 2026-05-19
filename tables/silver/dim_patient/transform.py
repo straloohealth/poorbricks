@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 # Column-mapping reality, May 2026:
 # bronze.smith_users (actual production shape from MongoDB) carries:
 #   externalId, name, email, phone, origin, active, createdAt,
-#   birth_date, cpf, extraFields, fivetran_synced, fivetran_deleted
+#   birth_date, cpf, extraFields
 # Silver dimension maps these to lowercase snake_case for consistency.
 _TRIMMABLE_PRESENT_COLS = ("externalId", "name", "email", "phone", "origin")
 
@@ -63,8 +63,6 @@ def compute(inputs: DimPatientInputs) -> DataFrame:
         f.col("createdAt").alias("created_at"),
         f.col("origin").alias("origin_slug"),
         f.coalesce(f.col("active"), f.lit(False)).alias("is_active"),
-        # fivetran_deleted is the only deletion signal in bronze today.
-        f.coalesce(f.col("fivetran_deleted"), f.lit(False)).alias("is_deleted"),
         f.lit(False).alias("is_high_risk"),
         f.lit(False).alias("is_surgical"),
     )

@@ -56,6 +56,5 @@ class TestPatientsGoldTransform:
         assert row["email"] == "maria@example.com"
         assert row["origin_slug"] == "rede_sc"
         assert row["is_active"] is True
-        assert row["is_deleted"] is False
         assert row["is_high_risk"] is False
         assert row["is_surgical"] is True

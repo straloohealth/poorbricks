@@ -23,8 +23,6 @@ def nominal() -> HappyPathInputs:
             "birth_date": None,
             "cpf": None,
             "extraFields": None,
-            "fivetran_synced": None,
-            "fivetran_deleted": None,
         }
     ]
     return HappyPathInputs.from_rows({"smith_users": rows})

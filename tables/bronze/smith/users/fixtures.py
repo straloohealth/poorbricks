@@ -35,8 +35,6 @@ def smoke() -> SmithUsersInputs:
                     "birth_date": _BIRTH,
                     "cpf": None,
                     "extraFields": [{"fieldName": "company", "fieldValue": "AON Corp"}],
-                    "fivetran_synced": None,
-                    "fivetran_deleted": None,
                 }
             ]
         }

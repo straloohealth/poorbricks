@@ -61,9 +61,6 @@ class DimPatient(ValidatedStruct):
     is_active: bool = Field(
         description="Whether the patient is currently active in the program."
     )
-    is_deleted: bool = Field(
-        description="Soft-delete flag carried from Smith (true means the patient was removed)."
-    )
     is_high_risk: bool = Field(
         description="Whether clinical triage flagged the patient as high-risk."
     )
@@ -77,7 +74,6 @@ class DimPatient(ValidatedStruct):
             NotNullRule(column="patient_id"),
             NotNullRule(column="created_at"),
             NotNullRule(column="is_active"),
-            NotNullRule(column="is_deleted"),
             NotNullRule(column="is_high_risk"),
             NotNullRule(column="is_surgical"),
             StringLengthRule(column="patient_id", min_length=1, max_length=255),
@@ -97,7 +93,6 @@ class DimPatientExpectations(Expectations):
         "patient_id",
         "created_at",
         "is_active",
-        "is_deleted",
         "is_high_risk",
         "is_surgical",
     ]

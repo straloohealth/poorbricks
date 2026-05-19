@@ -28,7 +28,7 @@ class PatientGold(ValidatedStruct):
 
     Surfaces the columns overseer's PostgresQuery classes consume:
     identity (id, name, email, phone), program origin (origin_slug),
-    lifecycle flags (is_active, is_deleted), clinical flags (is_high_risk,
+    lifecycle flags (is_active), clinical flags (is_high_risk,
     is_surgical), and the canonical timestamps. ``patient_id`` is the
     natural key.
     """
@@ -53,9 +53,6 @@ class PatientGold(ValidatedStruct):
     is_active: bool = Field(
         description="Whether the patient is currently active in the program.",
     )
-    is_deleted: bool = Field(
-        description="Soft-delete flag carried from Smith.",
-    )
     is_high_risk: bool = Field(
         description="Whether clinical triage flagged the patient as high-risk.",
     )
@@ -72,7 +69,6 @@ class PatientGold(ValidatedStruct):
             NotNullRule(column="patient_id"),
             NotNullRule(column="created_at"),
             NotNullRule(column="is_active"),
-            NotNullRule(column="is_deleted"),
             NotNullRule(column="is_high_risk"),
             NotNullRule(column="is_surgical"),
             StringLengthRule(column="patient_id", min_length=1, max_length=255),
@@ -95,7 +91,6 @@ class PatientsGoldExpectations(Expectations):
         "patient_id",
         "created_at",
         "is_active",
-        "is_deleted",
         "is_high_risk",
         "is_surgical",
     ]

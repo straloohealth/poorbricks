@@ -32,8 +32,6 @@ def smoke() -> SmithNavigatorsInputs:
                     "phone": "+5585988887777",
                     "org": "straloo",
                     "groups": ["navigator"],
-                    "fivetran_synced": None,
-                    "fivetran_deleted": None,
                 }
             ]
         }
