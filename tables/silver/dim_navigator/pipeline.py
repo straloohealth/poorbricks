@@ -20,7 +20,7 @@ from tables.silver.dim_navigator.transform import compute
 class DimNavigatorInputs(Inputs):
     """Single upstream: smith_navigators fetched from contracts store."""
 
-    smith_navigators: Annotated[DataFrame, ContractSource("smith.navigators")]
+    smith_navigators: Annotated[DataFrame, ContractSource("smith_navigators")]
 
 
 @pipeline(

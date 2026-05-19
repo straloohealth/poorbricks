@@ -21,7 +21,7 @@ from tables.silver.dim_patient.transform import compute
 class DimPatientInputs(Inputs):
     """Single upstream: smith_users fetched from contracts store."""
 
-    smith_users: Annotated[DataFrame, ContractSource("smith.users")]
+    smith_users: Annotated[DataFrame, ContractSource("smith_users")]
 
 
 @pipeline(
