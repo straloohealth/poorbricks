@@ -26,18 +26,44 @@ pip install keyrings.google-artifactregistry-auth
 
 #### CircleCI
 
-Add the **`gke` context** to your job. It supplies `GOOGLE_SERVICE_ACCOUNT`, which the `deployer` CLI uses to activate the `circleci` service account — the same account that publishes the package and has `roles/artifactregistry.reader` on the registry.
+Add the **`gke` context** and use the `tools/install-python-deps` orb command. It handles GCP authentication, credential injection, and caching automatically — no manual setup needed.
 
-```yaml
-jobs:
-  my-job:
-    steps:
-      - run: deployer auth gke   # activates circleci SA → gcloud ADC
-      - run: pip install keyrings.google-artifactregistry-auth
-      - run: pip install poorbricks-framework --index-url https://us-central1-python.pkg.dev/inner-autonomy-371516/python/simple/
+First, add the private source to your `pyproject.toml`:
+
+```toml
+[[tool.poetry.source]]
+name = "gcp"
+url = "https://us-central1-python.pkg.dev/inner-autonomy-371516/python/simple/"
+priority = "supplemental"
 ```
 
-Or, if you configure Poetry sources (see below), just `poetry install`.
+Then in your CircleCI config:
+
+```yaml
+orbs:
+  tools: straloohealth/tools@3.0.22
+
+jobs:
+  my-job:
+    docker:
+      - image: docker.io/danielspeixoto/python
+    steps:
+      - checkout
+      - tools/install-python-deps   # GCP auth + cache + poetry install
+      - run: poetry run pytest
+    # Must use the gke context so GOOGLE_SERVICE_ACCOUNT is available
+    context:
+      - gke
+```
+
+`tools/install-python-deps` accepts optional parameters:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `install-command` | `poetry install --no-interaction` | Override for custom flags |
+| `cache-version` | `v1` | Bump to bust the cache |
+| `cache-path` | `/root/.cache/pypoetry/virtualenvs` | Venv directory to cache |
+| `source-name` | `gcp` | Must match your `[[tool.poetry.source]]` name |
 
 ### pip
 
@@ -69,7 +95,9 @@ Poetry uses the same GCP keyring helper for auth — make sure `keyrings.google-
 
 ## Publishing a new version
 
-Publishing runs automatically on every merge to `main` via CircleCI (`publish-package` job in the `deploy` workflow). To publish manually:
+Publishing runs automatically on every merge to `main` via the `tools/publish-python-package` orb job in the `deploy` workflow. Each build is versioned as `{base}+{sha7}` (e.g. `0.1.0+abc1234`).
+
+To publish manually:
 
 ```bash
 poetry build
@@ -81,8 +109,6 @@ twine upload \
   --password "$(gcloud auth print-access-token)" \
   dist/*
 ```
-
-Bump the version in `pyproject.toml` before publishing to avoid a conflict with an existing version.
 
 ## Development
 
