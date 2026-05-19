@@ -184,6 +184,30 @@ jobs:
       - store_test_results:
           path: test-results-workflow.xml
 
+  publish-package:
+    docker:
+      - image: docker.io/danielspeixoto/gke
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Authenticate to GCP
+          command: deployer auth gke
+      - run:
+          name: Build wheel
+          command: |
+            pip install --quiet poetry
+            poetry build
+      - run:
+          name: Publish to GCP Artifact Registry
+          command: |
+            pip install --quiet twine
+            twine upload \
+              --repository-url https://us-central1-python.pkg.dev/inner-autonomy-371516/python/ \
+              --username oauth2accesstoken \
+              --password "$(gcloud auth print-access-token)" \
+              dist/*
+
   image-release:
     docker:
       - image: docker.io/danielspeixoto/gke
@@ -237,6 +261,12 @@ workflows:
           requires: [lint-and-type-check]
       - integration-tests:
           requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
+      - publish-package:
+          context:
+            - gke
+          requires:
+            - integration-tests
+            - workflow-compilation-tests
 
   image-release:
     when:
