@@ -189,6 +189,12 @@ def create_dataframe(
 
     ordered_data = []
     for row in list_data:
+        missing = [col for col in target_columns if col not in row]
+        if missing:
+            raise ValueError(
+                f"Fixture row missing fields: {missing}. "
+                f"Row has: {sorted(row.keys())}. Schema expects: {target_columns}."
+            )
         ordered_row = {col: row[col] for col in target_columns}
         ordered_data.append(ordered_row)
 

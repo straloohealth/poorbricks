@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: airflow-dag-processor
   namespace: airflow
+  annotations:
+    reloader.stakater.com/auto: "true"
   labels:
     component: dag-processor
 spec:

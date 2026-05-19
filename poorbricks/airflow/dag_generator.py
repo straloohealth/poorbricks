@@ -197,6 +197,11 @@ def _render_volumes_and_env() -> str:
             ),
         ]
 
+        _WORKER_RESOURCES = k8s.V1ResourceRequirements(
+            requests={"cpu": "500m", "memory": "2Gi"},
+            limits={"cpu": "2", "memory": "4Gi"},
+        )
+
         _ENV_VARS = [
             k8s.V1EnvVar(name="TABLES_ROOT", value="/workspace/tables"),
             k8s.V1EnvVar(name="PYTHONPATH", value="/workspace:/app"),
@@ -252,6 +257,7 @@ def _render_build_task() -> str:
                 volume_mounts=[_CODE_MOUNT],
                 env_from=_ENV_FROM,
                 env_vars=_ENV_VARS,
+                container_resources=_WORKER_RESOURCES,
                 node_selector=NODE_SELECTOR,
                 get_logs=True,
                 in_cluster=True,

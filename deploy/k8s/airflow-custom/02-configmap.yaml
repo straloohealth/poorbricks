@@ -11,7 +11,7 @@ data:
     executor = LocalExecutor
     fernet_key = jO0L0C5rEw0yJ_0zyBQ3_c-2x3E_c5yO5zN8xK2yP0A=
     load_examples = False
-    max_active_tasks_per_dag = 16
+    max_active_tasks_per_dag = 4
 
     [scheduler]
     catchup_by_default = False

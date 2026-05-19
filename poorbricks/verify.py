@@ -1,6 +1,6 @@
 """Contract and expectations verification for a table-repo.
 
-Two modes:
+Three modes:
 
 * ``verify_local`` — schema-only check against the contracts store. Fast, no
   Spark. Detects: missing contracts; for ``TableSource`` inputs, schema
@@ -9,6 +9,11 @@ Two modes:
 * ``verify_ci`` — full pipeline execution against fixtures (or production
   data), then runs ``ValidatedStruct`` rules and ``Expectations`` checks.
   Optionally exports a profile JSON per pipeline. Does not write.
+
+* ``verify_mongo`` — fast real-data check (no Spark). Connects to MongoDB via
+  ``MONGO_URI`` env var, samples 100 oldest + 100 newest docs per collection,
+  and checks that every field declared in each ``MongoSource`` schema is
+  present in at least one sampled document.
 
 Used by the ``poorbricks-verify`` CLI in ``[tool.poetry.scripts]``.
 """
@@ -25,7 +30,7 @@ from typing import Any
 
 from poorbricks.arch import ArchError, check_architecture
 from poorbricks.discovery import discover_all_pipelines
-from poorbricks.inputs import ContractSource, TableSource
+from poorbricks.inputs import ContractSource, MongoSource, TableSource
 from poorbricks.registry import PipelineMeta, all_pipelines
 
 ContractFetcher = Callable[[str], dict[str, Any]]
@@ -135,6 +140,145 @@ def _check_pipeline_contracts(
                         details=diffs,
                     )
                 )
+    return errors
+
+
+@dataclass
+class MongoCheckError:
+    """A mongo-mode failure: schema field not present in any sampled document."""
+
+    pipeline_key: str
+    input_name: str
+    db: str
+    collection: str
+    missing_fields: list[str]
+    extra_fields: list[str]
+
+    def format(self) -> str:
+        parts = [
+            f"✗ {self.pipeline_key} [{self.input_name} → {self.db}.{self.collection}]"
+        ]
+        if self.missing_fields:
+            parts.append(
+                f"  MISSING in docs (schema declares but never seen): {self.missing_fields}"
+            )
+        if self.extra_fields:
+            parts.append(f"  EXTRA in docs (not in schema): {self.extra_fields}")
+        return "\n".join(parts)
+
+
+def _public_uri(mongo_uri: str) -> str:
+    """Strip the Atlas private-peering suffix (-pri) so the public endpoint is used."""
+    return mongo_uri.replace("-pri.", ".")
+
+
+def _sample_mongo_collection(
+    mongo_uri: str, db: str, collection: str, sample_size: int = 100
+) -> list[dict[str, Any]]:
+    """Return up to sample_size oldest + sample_size newest docs, deduplicated."""
+    import pymongo
+
+    client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(
+        _public_uri(mongo_uri)
+    )
+    coll = client[db][collection]
+    oldest = list(coll.find({}, limit=sample_size).sort("_id", pymongo.ASCENDING))
+    newest = list(coll.find({}, limit=sample_size).sort("_id", pymongo.DESCENDING))
+    seen: set[str] = set()
+    combined: list[dict[str, Any]] = []
+    for doc in oldest + newest:
+        key = str(doc.get("_id", id(doc)))
+        if key not in seen:
+            seen.add(key)
+            combined.append(doc)
+    return combined
+
+
+def verify_mongo(
+    tables_root: Path | None = None,
+    mongo_uri: str | None = None,
+    sample_size: int = 100,
+) -> list[MongoCheckError]:
+    """Fast real-data check. No Spark. Requires live MongoDB via MONGO_URI.
+
+    For each ``MongoSource`` in registered pipelines, fetches up to
+    ``sample_size`` oldest + ``sample_size`` newest documents and compares
+    the union of field names against the declared schema fields.
+    """
+    import os
+
+    uri = mongo_uri or os.getenv("MONGO_URI")
+    if not uri:
+        raise ValueError(
+            "MONGO_URI must be set (env var or .env file) to run --mode mongo."
+        )
+
+    discover_all_pipelines(tables_root)
+    errors: list[MongoCheckError] = []
+
+    for key, meta in all_pipelines().items():
+        for input_name, spec in meta.inputs_cls.sources().items():
+            if not isinstance(spec, MongoSource):
+                continue
+            schema_fields = {f.name for f in spec.schema.fields}
+            # Strip the framework's synthetic mongo_id alias: _id is not a user field
+            schema_fields.discard("mongo_id")
+
+            try:
+                docs = _sample_mongo_collection(
+                    uri, spec.db, spec.collection, sample_size
+                )
+            except Exception as exc:
+                errors.append(
+                    MongoCheckError(
+                        pipeline_key=key,
+                        input_name=input_name,
+                        db=spec.db,
+                        collection=spec.collection,
+                        missing_fields=[f"<connection error: {exc}>"],
+                        extra_fields=[],
+                    )
+                )
+                continue
+
+            if not docs:
+                print(
+                    f"  ⚠  {key}: {spec.db}.{spec.collection} is empty — skipping field check"
+                )
+                continue
+
+            from utils.mongo import _camel_to_snake
+
+            raw_fields: set[str] = set()
+            for doc in docs:
+                raw_fields.update(str(k) for k in doc.keys())
+            raw_fields.discard("_id")  # always present, handled separately by framework
+
+            # Normalise camelCase → snake_case (same transform the framework applies)
+            seen_fields = {_camel_to_snake(f) for f in raw_fields} | raw_fields
+
+            missing = sorted(schema_fields - seen_fields)
+            extra = sorted(
+                raw_fields - schema_fields - {"__v", "_cls", "_cls"}
+            )  # skip Mongo internals
+
+            if missing or extra:
+                errors.append(
+                    MongoCheckError(
+                        pipeline_key=key,
+                        input_name=input_name,
+                        db=spec.db,
+                        collection=spec.collection,
+                        missing_fields=missing,
+                        extra_fields=extra,
+                    )
+                )
+            else:
+                print(
+                    f"  ✓ {key}: {spec.db}.{spec.collection} "
+                    f"({len(docs)} docs sampled, {len(schema_fields)} schema fields all present)"
+                )
+
     return errors
 
 
@@ -272,7 +416,9 @@ def main(argv: list[str] | None = None) -> None:
         prog="poorbricks verify",
         description="Verify table-repo contracts and expectations",
     )
-    parser.add_argument("--mode", choices=["local", "ci", "arch"], required=True)
+    parser.add_argument(
+        "--mode", choices=["local", "ci", "arch", "mongo"], required=True
+    )
     parser.add_argument(
         "--tables-root",
         type=Path,
@@ -291,12 +437,23 @@ def main(argv: list[str] | None = None) -> None:
         choices=["production", "fixtures"],
         help="(ci mode) runner mode used to source upstream data",
     )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=100,
+        help="(mongo mode) number of oldest + newest docs to sample per collection",
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "local":
         errors: list[Any] = verify_local(tables_root=args.tables_root)
     elif args.mode == "arch":
         errors = check_architecture(tables_root=args.tables_root)
+    elif args.mode == "mongo":
+        errors = verify_mongo(
+            tables_root=args.tables_root,
+            sample_size=args.sample_size,
+        )
     else:
         errors = verify_ci(
             tables_root=args.tables_root,
@@ -316,10 +473,12 @@ def main(argv: list[str] | None = None) -> None:
 
 __all__ = [
     "ContractError",
+    "MongoCheckError",
     "VerificationError",
     "main",
     "verify_ci",
     "verify_local",
+    "verify_mongo",
     "ArchError",
     "check_architecture",
 ]

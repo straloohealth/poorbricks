@@ -528,7 +528,7 @@ class TestCreateDataFrameWithSchema:
             ]
         )
 
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="missing fields"):
             create_dataframe(test_data, target_schema)
 
     @pytest.mark.spark

@@ -31,7 +31,7 @@ def test_generated_dag_is_valid_python() -> None:
     )
     source = generate_dag_file(
         wf,
-        prefix="table-repo",
+        prefix="deadpool",
         image="docker.io/danielspeixoto/databricks:abc123",
     )
     ast.parse(source)
@@ -50,16 +50,20 @@ def test_generated_dag_references_keys() -> None:
     )
     source = generate_dag_file(
         wf,
-        prefix="table_repo",
+        prefix="deadpool",
         image="img:abc",
     )
-    assert "table_repo__gold_patients" in source
+    assert "deadpool__gold_patients" in source
     assert "'postgres:patients'" in source
     assert "'postgres:gold_summary'" in source
     assert "task_patients >> task_gold_summary" in source
     assert "KubernetesPodOperator" in source
     assert "poorbricks" in source
     assert "production" in source
+    assert "_WORKER_RESOURCES" in source
+    assert "container_resources=_WORKER_RESOURCES" in source
+    assert '"2Gi"' in source
+    assert '"4Gi"' in source
 
 
 def test_check_command_renders_check_arguments() -> None:
@@ -76,7 +80,7 @@ def test_check_command_renders_check_arguments() -> None:
     )
     source = generate_dag_file(
         wf,
-        prefix="table_repo",
+        prefix="deadpool",
         image="img:abc",
     )
     ast.parse(source)
