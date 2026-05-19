@@ -229,20 +229,41 @@ def _find_expectations_for(meta: PipelineMeta) -> type | None:
     return None
 
 
+def _stop_spark_if_running() -> None:
+    """Stop the active SparkSession to release JVM heap between batches."""
+    try:
+        from pyspark.sql import SparkSession
+
+        active = SparkSession.getActiveSession()
+        if active is not None:
+            active.stop()
+    except Exception:
+        pass
+
+
 def verify_ci(
     tables_root: Path | None = None,
     export_dir: Path | None = None,
     mode: str = "production",
+    spark_batch_size: int = 4,
 ) -> list[VerificationError]:
     """Full execution. Runs each pipeline, checks rules + expectations.
 
     Does NOT write pipeline output to any sink. ``mode="fixtures"`` lets
     tests run without a live MongoDB; CI uses the default ``"production"``.
+
+    Pipelines are processed in batches of ``spark_batch_size``; the Spark
+    session is restarted between batches to prevent JVM heap exhaustion when
+    verifying large table repositories.
     """
     discover_all_pipelines(tables_root)
     errors: list[VerificationError] = []
-    for key, meta in all_pipelines().items():
-        errors.extend(_run_pipeline_and_check(key, meta, mode, export_dir))
+    pipeline_items = list(all_pipelines().items())
+    for batch_start in range(0, len(pipeline_items), spark_batch_size):
+        batch = pipeline_items[batch_start : batch_start + spark_batch_size]
+        for key, meta in batch:
+            errors.extend(_run_pipeline_and_check(key, meta, mode, export_dir))
+        _stop_spark_if_running()
     return errors
 
 
