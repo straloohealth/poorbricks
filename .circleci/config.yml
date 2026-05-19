@@ -221,7 +221,7 @@ jobs:
       - run:
           name: Install kubectl and gke-gcloud-auth-plugin
           command: |
-            gcloud components install kubectl gke-gcloud-auth-plugin --quiet
+            apt-get install -y kubectl google-cloud-cli-gke-gcloud-auth-plugin
       - run:
           name: Rollout restart poorbricks-server
           command: |
