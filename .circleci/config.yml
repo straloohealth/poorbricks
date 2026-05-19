@@ -219,9 +219,14 @@ jobs:
               .
           no_output_timeout: 30m
       - run:
+          name: Install kubectl and gke-gcloud-auth-plugin
+          command: |
+            gcloud components install kubectl gke-gcloud-auth-plugin --quiet
+      - run:
           name: Rollout restart poorbricks-server
           command: |
             set -e
+            export USE_GKE_GCLOUD_AUTH_PLUGIN=True
             gcloud container clusters get-credentials "${GKE_CLUSTER_NAME:-cluster-1}" \
               --zone "${GKE_ZONE:-us-central1}" \
               --project "${GOOGLE_PROJECT_ID:-inner-autonomy-371516}"
