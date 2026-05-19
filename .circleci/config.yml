@@ -186,30 +186,13 @@ jobs:
 
   image-release:
     docker:
-      - image: google/cloud-sdk:slim
+      - image: docker.io/danielspeixoto/gke
     resource_class: small
     steps:
       - checkout
       - run:
           name: Authenticate to GCP
-          command: |
-            set -e
-            if [ -z "${GCLOUD_SERVICE_KEY:-}" ]; then
-              echo "GCLOUD_SERVICE_KEY env var is empty (gke context not attached?)" >&2
-              exit 1
-            fi
-            # GCLOUD_SERVICE_KEY is the JSON service-account key as provided
-            # by the org-level 'gke' context. Accept either raw JSON or
-            # base64-encoded; gcloud writes a clear error otherwise.
-            if printf '%s' "$GCLOUD_SERVICE_KEY" | base64 -d > /tmp/gcp-sa.json 2>/dev/null \
-                && python3 -c "import json; json.load(open('/tmp/gcp-sa.json'))" 2>/dev/null; then
-              :
-            else
-              printf '%s' "$GCLOUD_SERVICE_KEY" > /tmp/gcp-sa.json
-              python3 -c "import json; json.load(open('/tmp/gcp-sa.json'))"
-            fi
-            gcloud auth activate-service-account --key-file=/tmp/gcp-sa.json
-            gcloud config set project "${GOOGLE_PROJECT_ID:-inner-autonomy-371516}"
+          command: deployer auth gke
       - run:
           name: Submit Cloud Build (api image)
           command: |
@@ -219,17 +202,8 @@ jobs:
               .
           no_output_timeout: 30m
       - run:
-          name: Install kubectl and gke-gcloud-auth-plugin
-          command: |
-            apt-get install -y kubectl google-cloud-cli-gke-gcloud-auth-plugin
-      - run:
           name: Rollout restart poorbricks-server
           command: |
-            set -e
-            export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-            gcloud container clusters get-credentials "${GKE_CLUSTER_NAME:-cluster-1}" \
-              --zone "${GKE_ZONE:-us-central1}" \
-              --project "${GOOGLE_PROJECT_ID:-inner-autonomy-371516}"
             kubectl rollout restart deployment/poorbricks-server -n airflow
             kubectl rollout status deployment/poorbricks-server -n airflow --timeout=5m
 
