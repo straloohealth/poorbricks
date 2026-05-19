@@ -230,6 +230,17 @@ jobs:
           command: |
             kubectl rollout restart deployment/poorbricks-server -n airflow
             kubectl rollout status deployment/poorbricks-server -n airflow --timeout=5m
+      - run:
+          name: Rollout restart poorbricks-streamlit
+          # Shares the api image. Skipped until the deployment has been
+          # applied once via `kubectl apply -f deploy/k8s/streamlit/`.
+          command: |
+            if kubectl get deployment poorbricks-streamlit -n airflow >/dev/null 2>&1; then
+              kubectl rollout restart deployment/poorbricks-streamlit -n airflow
+              kubectl rollout status deployment/poorbricks-streamlit -n airflow --timeout=5m
+            else
+              echo "poorbricks-streamlit not deployed yet — skipping"
+            fi
 
 # ── Workflows ──────────────────────────────────────────────────────────────
 workflows:

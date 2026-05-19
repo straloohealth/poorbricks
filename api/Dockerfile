@@ -21,6 +21,8 @@ COPY poorbricks/ /app/poorbricks/
 COPY validation/ /app/validation/
 COPY utils/ /app/utils/
 COPY api/ /app/api/
+COPY tables/ /app/tables/
+COPY streamlit_app/ /app/streamlit_app/
 
 RUN poetry run pip install --no-deps .
 

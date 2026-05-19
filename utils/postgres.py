@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
 from typing import Any
 
 import psycopg2
@@ -20,6 +21,23 @@ from pyspark.sql.types import (
     StructType,
     TimestampType,
 )
+
+
+@dataclass(frozen=True)
+class ColumnInfo:
+    name: str
+    data_type: str
+    nullable: bool
+
+
+@dataclass(frozen=True)
+class TableSnapshot:
+    schema: str
+    name: str
+    row_count: int
+    size_bytes: int
+    columns: list[ColumnInfo]
+    sample_rows: list[dict[str, Any]]
 
 
 class PostgresLoader:
@@ -157,4 +175,145 @@ class PostgresLoader:
         return row_count
 
 
-__all__ = ["PostgresLoader"]
+class PostgresInspector:
+    """Read-only PostgreSQL inspection for the Streamlit status page."""
+
+    _SYSTEM_SCHEMAS = (
+        "pg_catalog",
+        "information_schema",
+        "pg_toast",
+    )
+
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        db: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        from poorbricks.settings import settings
+
+        self.host = host or settings.postgres_host
+        self.port = port or settings.postgres_port
+        self.db = db or settings.postgres_db
+        self.user = user or settings.postgres_user
+        self.password = password or settings.postgres_password
+
+    def _connect(self) -> psycopg2.extensions.connection:
+        return psycopg2.connect(
+            host=self.host,
+            port=self.port,
+            database=self.db,
+            user=self.user,
+            password=self.password,
+        )
+
+    def _columns_by_table(
+        self, cur: psycopg2.extensions.cursor
+    ) -> dict[tuple[str, str], list[ColumnInfo]]:
+        """Fetch every user table's columns in a single query."""
+        cur.execute(
+            """
+            SELECT table_schema, table_name, column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema NOT IN %s
+              AND table_schema NOT LIKE 'pg_%%'
+            ORDER BY table_schema, table_name, ordinal_position
+            """,
+            (self._SYSTEM_SCHEMAS,),
+        )
+        by_table: dict[tuple[str, str], list[ColumnInfo]] = {}
+        for schema, table, name, data_type, is_nullable in cur.fetchall():
+            by_table.setdefault((schema, table), []).append(
+                ColumnInfo(
+                    name=name,
+                    data_type=data_type,
+                    nullable=is_nullable == "YES",
+                )
+            )
+        return by_table
+
+    def inspect(self, sample_size: int = 10) -> list[TableSnapshot]:
+        """Return a full snapshot of every user table over a single connection.
+
+        Per table: exact row count, on-disk size, column schema, and up to
+        ``sample_size`` random rows. Accurate but O(n) over rows — suitable
+        for the analytics-scale tables this framework produces.
+        """
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT table_schema, table_name
+                    FROM information_schema.tables
+                    WHERE table_type = 'BASE TABLE'
+                      AND table_schema NOT IN %s
+                      AND table_schema NOT LIKE 'pg_%%'
+                    ORDER BY table_schema, table_name
+                    """,
+                    (self._SYSTEM_SCHEMAS,),
+                )
+                tables = cur.fetchall()
+                columns_by_table = self._columns_by_table(cur)
+
+                snapshots: list[TableSnapshot] = []
+                for schema, name in tables:
+                    qualified = f'"{schema}"."{name}"'
+                    cur.execute(f"SELECT COUNT(*) FROM {qualified}")
+                    row_count = int(cur.fetchone()[0])  # type: ignore[index]
+                    cur.execute(
+                        "SELECT pg_total_relation_size(%s::regclass)",
+                        (f"{schema}.{name}",),
+                    )
+                    size_bytes = int(cur.fetchone()[0])  # type: ignore[index]
+
+                    sample_rows: list[dict[str, Any]] = []
+                    if row_count > 0 and sample_size > 0:
+                        cur.execute(
+                            f"SELECT * FROM {qualified} ORDER BY random() LIMIT %s",
+                            (sample_size,),
+                        )
+                        col_names = [d[0] for d in cur.description or []]
+                        sample_rows = [
+                            dict(zip(col_names, row)) for row in cur.fetchall()
+                        ]
+
+                    snapshots.append(
+                        TableSnapshot(
+                            schema=schema,
+                            name=name,
+                            row_count=row_count,
+                            size_bytes=size_bytes,
+                            columns=columns_by_table.get((schema, name), []),
+                            sample_rows=sample_rows,
+                        )
+                    )
+                return snapshots
+        finally:
+            conn.close()
+
+    def server_info(self) -> dict[str, str]:
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT version(), current_database(), current_user")
+                version, database, user = cur.fetchone()  # type: ignore[misc]
+                return {
+                    "host": str(self.host),
+                    "port": str(self.port),
+                    "database": database,
+                    "user": user,
+                    "version": version,
+                }
+        finally:
+            conn.close()
+
+
+__all__ = [
+    "PostgresLoader",
+    "PostgresInspector",
+    "TableSnapshot",
+    "ColumnInfo",
+]

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poorbricks-streamlit
+  namespace: airflow
+  labels:
+    app: poorbricks-streamlit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: poorbricks-streamlit
+  template:
+    metadata:
+      labels:
+        app: poorbricks-streamlit
+    spec:
+      serviceAccountName: poorbricks-streamlit
+      nodeSelector:
+        poorbricks.io/dags: "true"
+      containers:
+        - name: streamlit
+          image: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+          imagePullPolicy: Always
+          command:
+            - streamlit
+            - run
+            - streamlit_app/app.py
+            - --server.port=8501
+            - --server.address=0.0.0.0
+            - --server.headless=true
+            - --browser.gatherUsageStats=false
+          ports:
+            - containerPort: 8501
+              name: http
+          env:
+            - name: MONGO_URI
+              value: "mongodb://mongo.airflow.svc.cluster.local:27017"
+            - name: CONTRACTS_DB
+              value: poorbricks
+            - name: CONTRACTS_COLLECTION
+              value: data_contracts
+            - name: POSTGRES_HOST
+              value: postgresql-rw.storage.svc.cluster.local
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: poorbricks
+            # Dynamic read-only credentials synced from Vault by the
+            # Vault Secrets Operator (VaultDynamicSecret poorbricks-streamlit
+            # -> database/creds/pg-readonly-all). Rotated automatically.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-streamlit-postgresql-creds
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-streamlit-postgresql-creds
+                  key: password
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
