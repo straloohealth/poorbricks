@@ -18,6 +18,7 @@ import re
 import sys
 import tarfile
 import tempfile
+import threading
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -42,11 +43,17 @@ app = FastAPI(title="poorbricks-server", version="0.1.0")
 
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SHA_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
+_upload_lock = threading.Lock()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/status")
+def status() -> dict[str, bool]:
+    return {"busy": _upload_lock.locked()}
 
 
 @app.post("/v1/upload")
@@ -57,8 +64,16 @@ async def upload(
 ) -> JSONResponse:
     _validate_prefix(prefix)
     _validate_sha(sha)
-    payload = await code.read()
-    result = await run_in_threadpool(_handle_upload, prefix, sha, payload, settings)
+    if not _upload_lock.acquire(blocking=False):
+        return JSONResponse(
+            {"ok": False, "message": "server busy: another upload is in progress"},
+            status_code=503,
+        )
+    try:
+        payload = await code.read()
+        result = await run_in_threadpool(_handle_upload, prefix, sha, payload, settings)
+    finally:
+        _upload_lock.release()
     status_code = 200 if result.get("ok") else 422
     return JSONResponse(result, status_code=status_code)
 
