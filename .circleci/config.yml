@@ -218,6 +218,15 @@ jobs:
               --substitutions=SHORT_SHA="${CIRCLE_SHA1:0:7}" \
               .
           no_output_timeout: 30m
+      - run:
+          name: Rollout restart poorbricks-server
+          command: |
+            set -e
+            gcloud container clusters get-credentials "${GKE_CLUSTER_NAME:-cluster-1}" \
+              --zone "${GKE_ZONE:-us-central1}" \
+              --project "${GOOGLE_PROJECT_ID:-inner-autonomy-371516}"
+            kubectl rollout restart deployment/poorbricks-server -n airflow
+            kubectl rollout status deployment/poorbricks-server -n airflow --timeout=5m
 
 # ── Workflows ──────────────────────────────────────────────────────────────
 workflows:
