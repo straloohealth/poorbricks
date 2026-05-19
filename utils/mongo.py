@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import pymongo as pm
@@ -39,6 +40,30 @@ def _sanitize_value(v: Any) -> Any:
     if isinstance(v, list):
         return [_sanitize_value(item) for item in v]
     return v
+
+
+def _camel_to_snake(name: str) -> str:
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
+def _rename_camel_keys(
+    rows: list[dict[str, Any]], schema_field_names: set[str]
+) -> list[dict[str, Any]]:
+    """Rename camelCase document keys to snake_case when the snake_case form is in the schema."""
+    if not rows:
+        return rows
+    sample_keys: set[str] = set()
+    for doc in rows:
+        sample_keys.update(doc.keys())
+    rename_map = {
+        k: _camel_to_snake(k)
+        for k in sample_keys
+        if _camel_to_snake(k) != k and _camel_to_snake(k) in schema_field_names
+    }
+    if not rename_map:
+        return rows
+    return [{rename_map.get(k, k): v for k, v in doc.items()} for doc in rows]
 
 
 def _sanitize_bson_types(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -99,5 +124,6 @@ def get_all(
                 mapped_rows.append(mapped_doc)
             rows = mapped_rows
 
+    rows = _rename_camel_keys(rows, schema_field_names)
     rows = _sanitize_bson_types(rows)
     return spark.createDataFrame(rows, schema=schema)
