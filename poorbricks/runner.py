@@ -377,8 +377,16 @@ def _validate_contract_sources(inputs_cls: type[Inputs]) -> list[str]:
 
 
 def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
-    """Compute and verify a pipeline's output against its schema."""
-    df = cast("DataFrame", meta.original_fn(inputs))
+    """Compute and verify a pipeline's output against its schema.
+
+    The output is persisted DISK_ONLY (never held in the heap or collected to
+    the driver) so the upstream sources are read exactly once: schema
+    validation runs several scans and the persist step writes the same
+    DataFrame, and without this each of those re-reads MongoDB / JDBC.
+    """
+    from pyspark.storagelevel import StorageLevel
+
+    df = cast("DataFrame", meta.original_fn(inputs)).persist(StorageLevel.DISK_ONLY)
     errors: list[str] = []
     try:
         meta.model.verify(df, strict=True)  # type: ignore[attr-defined]

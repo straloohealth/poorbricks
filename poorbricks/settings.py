@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     spark_master: str = "local[*]"  # all cores; the test suite bounds this
     spark_driver_memory: str = "2g"
     spark_local_dir: str | None = None  # scratch dir for shuffle/sort spill
-    read_partitions: int = 16  # parallelism for partitioned Mongo / JDBC reads
+    read_partitions: int = 64  # partitioned Mongo / JDBC reads — small chunks
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
