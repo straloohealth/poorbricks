@@ -121,9 +121,9 @@ tasks:
 
         workflows = load_workflows(workflows_dir)
         assert len(workflows) > 0, "No workflows found in directory"
-        assert any(
-            wf.name == "gold_pipeline" for wf in workflows
-        ), "gold_pipeline not found"
+        assert any(wf.name == "gold_pipeline" for wf in workflows), (
+            "gold_pipeline not found"
+        )
 
 
 class TestDagGeneration:
@@ -202,9 +202,9 @@ class TestDagGeneration:
         assert "CODE_PVC_CLAIM" in dag_source, "DAG must reference CODE_PVC_CLAIM"
         assert "CODE_SUBPATH" in dag_source, "DAG must reference CODE_SUBPATH"
         assert "__code__/myrepo" in dag_source, "subpath must include prefix"
-        assert (
-            "init_containers" not in dag_source
-        ), "DAG must not use init containers for code access (PVC approach)"
+        assert "init_containers" not in dag_source, (
+            "DAG must not use init containers for code access (PVC approach)"
+        )
 
     def test_dag_includes_postgres_creds_secret(self, tmp_path: Path) -> None:
         """Verify DAG env_from includes the postgres credentials secret."""
@@ -236,9 +236,9 @@ class TestWorkerPodDagAccess:
     def test_pod_template_file_exists(self) -> None:
         """deploy/k8s/airflow/pod_template.yaml must exist."""
         pod_tmpl = Path("deploy/k8s/airflow/pod_template.yaml")
-        assert (
-            pod_tmpl.exists()
-        ), "pod_template.yaml missing — executor pods will not receive DAGs"
+        assert pod_tmpl.exists(), (
+            "pod_template.yaml missing — executor pods will not receive DAGs"
+        )
 
     def test_pod_template_uses_pvc_not_init_container(self) -> None:
         """pod_template.yaml must mount PVC, not use fetch-dags init container."""
@@ -253,15 +253,15 @@ class TestWorkerPodDagAccess:
         assert tmpl["spec"]["serviceAccountName"] == "airflow"
 
         init_containers = tmpl["spec"].get("initContainers", [])
-        assert (
-            len(init_containers) == 0
-        ), "pod_template must not have initContainers (no GCS fetch-dags)"
+        assert len(init_containers) == 0, (
+            "pod_template must not have initContainers (no GCS fetch-dags)"
+        )
 
         volumes = {v["name"]: v for v in tmpl["spec"]["volumes"]}
         assert "dags" in volumes, "Missing 'dags' volume"
-        assert (
-            "persistentVolumeClaim" in volumes["dags"]
-        ), "'dags' volume must be persistentVolumeClaim, not emptyDir"
+        assert "persistentVolumeClaim" in volumes["dags"], (
+            "'dags' volume must be persistentVolumeClaim, not emptyDir"
+        )
         assert (
             volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
         ), "PVC claim must be named 'airflow-dags'"
@@ -279,9 +279,9 @@ class TestWorkerPodDagAccess:
             None,
         )
         assert dag_mount is not None, "base container must mount /opt/airflow/dags"
-        assert (
-            dag_mount.get("readOnly") is True
-        ), "DAG mount must be read-only in executor pods"
+        assert dag_mount.get("readOnly") is True, (
+            "DAG mount must be read-only in executor pods"
+        )
 
     def test_pod_template_has_no_gcs_references(self) -> None:
         """pod_template.yaml must not reference GCS, gsutil, or GCP credentials."""
@@ -299,14 +299,16 @@ class TestWorkerPodDagAccess:
             "gs://poorbricks-airflow-dags",
         ]
         for term in forbidden:
-            assert (
-                term not in content
-            ), f"pod_template.yaml contains '{term}' — remove all GCS references"
+            assert term not in content, (
+                f"pod_template.yaml contains '{term}' — remove all GCS references"
+            )
 
     def test_no_cross_namespace_rbac_needed(self) -> None:
         """Single-namespace architecture eliminates need for cross-namespace RBAC."""
         rbac_path = Path("deploy/k8s/workers/rbac.yaml")
-        assert not rbac_path.exists(), "deploy/k8s/workers/rbac.yaml should be deleted in single-namespace architecture"
+        assert not rbac_path.exists(), (
+            "deploy/k8s/workers/rbac.yaml should be deleted in single-namespace architecture"
+        )
 
 
 class TestDeploymentManifests:
@@ -320,24 +322,24 @@ class TestDeploymentManifests:
         assert pvc_path.exists(), "deploy/k8s/airflow-custom/00-pvc.yaml not found"
 
         pvc = yaml.safe_load(pvc_path.read_text())
-        assert (
-            pvc["kind"] == "PersistentVolumeClaim"
-        ), "pvc.yaml must define kind: PersistentVolumeClaim"
-        assert (
-            pvc["metadata"]["name"] == "airflow-dags"
-        ), "PVC must be named 'airflow-dags'"
-        assert (
-            pvc["metadata"]["namespace"] == "airflow"
-        ), "PVC must be in 'airflow' namespace"
+        assert pvc["kind"] == "PersistentVolumeClaim", (
+            "pvc.yaml must define kind: PersistentVolumeClaim"
+        )
+        assert pvc["metadata"]["name"] == "airflow-dags", (
+            "PVC must be named 'airflow-dags'"
+        )
+        assert pvc["metadata"]["namespace"] == "airflow", (
+            "PVC must be in 'airflow' namespace"
+        )
 
         spec = pvc["spec"]
-        assert "ReadWriteOnce" in spec.get(
-            "accessModes", []
-        ), "PVC must allow ReadWriteOnce access"
+        assert "ReadWriteOnce" in spec.get("accessModes", []), (
+            "PVC must allow ReadWriteOnce access"
+        )
         storage = spec.get("resources", {}).get("requests", {}).get("storage")
-        assert storage is not None and storage.endswith(
-            ("Gi", "Mi")
-        ), "PVC must declare storage request (e.g., 10Gi)"
+        assert storage is not None and storage.endswith(("Gi", "Mi")), (
+            "PVC must declare storage request (e.g., 10Gi)"
+        )
 
     def test_api_deployment_uses_local_dag_store(self) -> None:
         """deploy/k8s/api/deployment.yaml must use local DAG store + PVC mount."""
@@ -354,27 +356,27 @@ class TestDeploymentManifests:
         assert server is not None, "No api container found"
 
         env_dict = {e["name"]: e.get("value") for e in server.get("env", [])}
-        assert (
-            env_dict.get("POORBRICKS_API_DAG_STORE") == "local"
-        ), "POORBRICKS_API_DAG_STORE must be 'local'"
-        assert (
-            "POORBRICKS_API_DAGS_BUCKET" not in env_dict
-        ), "POORBRICKS_API_DAGS_BUCKET must not be set (GCS removed)"
-        assert (
-            env_dict.get("POORBRICKS_API_DAGS_DIR") == "/opt/airflow/dags"
-        ), "POORBRICKS_API_DAGS_DIR must point to /opt/airflow/dags (PVC mount)"
+        assert env_dict.get("POORBRICKS_API_DAG_STORE") == "local", (
+            "POORBRICKS_API_DAG_STORE must be 'local'"
+        )
+        assert "POORBRICKS_API_DAGS_BUCKET" not in env_dict, (
+            "POORBRICKS_API_DAGS_BUCKET must not be set (GCS removed)"
+        )
+        assert env_dict.get("POORBRICKS_API_DAGS_DIR") == "/opt/airflow/dags", (
+            "POORBRICKS_API_DAGS_DIR must point to /opt/airflow/dags (PVC mount)"
+        )
 
         vol_mounts = {m["name"]: m for m in server.get("volumeMounts", [])}
-        assert (
-            "dags" in vol_mounts
-        ), "poorbricks-server container must mount 'dags' volume"
+        assert "dags" in vol_mounts, (
+            "poorbricks-server container must mount 'dags' volume"
+        )
         assert vol_mounts["dags"]["mountPath"] == "/opt/airflow/dags"
 
         volumes = {v["name"]: v for v in api["spec"]["template"]["spec"]["volumes"]}
         assert "dags" in volumes, "Pod spec must define 'dags' volume"
-        assert (
-            "persistentVolumeClaim" in volumes["dags"]
-        ), "'dags' volume must be persistentVolumeClaim"
+        assert "persistentVolumeClaim" in volumes["dags"], (
+            "'dags' volume must be persistentVolumeClaim"
+        )
         assert volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
 
     def test_api_ingress_uses_tailscale(self) -> None:
@@ -390,9 +392,9 @@ class TestDeploymentManifests:
         assert ingress["metadata"]["namespace"] == "airflow"
 
         spec = ingress["spec"]
-        assert (
-            spec.get("ingressClassName") == "tailscale"
-        ), "Ingress must use ingressClassName: tailscale (VPN exposure)"
+        assert spec.get("ingressClassName") == "tailscale", (
+            "Ingress must use ingressClassName: tailscale (VPN exposure)"
+        )
 
         rules = spec.get("rules", [])
         assert len(rules) > 0, "Ingress must have rules"
@@ -401,12 +403,12 @@ class TestDeploymentManifests:
             paths = rule.get("http", {}).get("paths", [])
             for path in paths:
                 backend = path.get("backend", {}).get("service", {})
-                assert (
-                    backend.get("name") == "poorbricks-server"
-                ), "Backend service must be named 'poorbricks-server'"
-                assert (
-                    backend.get("port", {}).get("number") == 8080
-                ), "Backend service port must be 8080"
+                assert backend.get("name") == "poorbricks-server", (
+                    "Backend service must be named 'poorbricks-server'"
+                )
+                assert backend.get("port", {}).get("number") == 8080, (
+                    "Backend service port must be 8080"
+                )
 
     def test_deploy_script_exists(self) -> None:
         """scripts/deploy_k8s.sh must exist and be executable."""

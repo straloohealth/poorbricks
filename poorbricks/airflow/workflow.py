@@ -44,6 +44,8 @@ class WorkflowParseError(ValueError):
 
 
 _ALLOWED_COMMANDS = ("run", "check")
+_ALLOWED_WORKFLOW_KEYS = {"name", "schedule", "image", "tasks"}
+_ALLOWED_TASK_KEYS = {"id", "pipeline", "command"}
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,11 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _build_workflow(path: Path, raw: dict[str, Any]) -> WorkflowConfig:
+    unused_keys = set(raw.keys()) - _ALLOWED_WORKFLOW_KEYS
+    if unused_keys:
+        raise WorkflowParseError(
+            path, f"unknown keys in workflow: {sorted(unused_keys)}"
+        )
     name = _required_str(path, raw, "name")
     schedule_raw = _required_str(path, raw, "schedule")
     if schedule_raw.strip().lower() == "manual":
@@ -119,14 +126,20 @@ def _build_workflow(path: Path, raw: dict[str, Any]) -> WorkflowConfig:
     for index, item in enumerate(tasks_raw):
         if not isinstance(item, dict):
             raise WorkflowParseError(path, f"task[{index}] must be a mapping")
-        task_id = _required_str(path, item, "id", context=f"task[{index}]")
-        pipeline = _required_str(path, item, "pipeline", context=f"task[{index}]")
         if "depends_on" in item:
             raise WorkflowParseError(
                 path,
                 f"task[{index}].depends_on is not accepted — task order is "
                 "derived automatically from pipeline inputs",
             )
+        unused_task_keys = set(item.keys()) - _ALLOWED_TASK_KEYS
+        if unused_task_keys:
+            raise WorkflowParseError(
+                path,
+                f"task[{index}] has unknown keys: {sorted(unused_task_keys)}",
+            )
+        task_id = _required_str(path, item, "id", context=f"task[{index}]")
+        pipeline = _required_str(path, item, "pipeline", context=f"task[{index}]")
         command_raw = item.get("command", "run")
         if not isinstance(command_raw, str) or command_raw not in _ALLOWED_COMMANDS:
             raise WorkflowParseError(
