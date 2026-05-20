@@ -164,8 +164,10 @@ def _check_pipeline_dir(pipeline_dir: Path, rel: str) -> list[ArchError]:
                     )
                 )
 
-        # 6. snake_case field names on ValidatedStruct subclasses
-        errors.extend(_check_snake_case_fields(config_path, rel))
+        # 6. snake_case field names on ValidatedStruct subclasses (silver/gold only)
+        # Bronze models mirror MongoDB documents which use camelCase natively.
+        if level in _SILVER_GOLD_LEVELS:
+            errors.extend(_check_snake_case_fields(config_path, rel))
 
     return errors
 
