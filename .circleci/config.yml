@@ -2,14 +2,8 @@ version: 2.1
 
 # The Straloo tools orb provides install-python-deps, wait-for-ports-ready,
 # build-docker, deploy-k8s and publish-python-package.
-#
-# TEMPORARY: pinned to the dev version published by the orb's
-# feat/circleci-orb-conventions branch (orb-circleci-tools PR #35), which
-# carries the wait-for-ports-ready command and the install-python-deps
-# `private-registry` parameter. Switch back to a production pin
-# (straloohealth/tools@3) once that orb change is released.
 orbs:
-  tools: straloohealth/tools@dev:3.0.29-feat-circleci-orb-conventions+3
+  tools: straloohealth/tools@3
 
 # ── Executors ───────────────────────────────────────────────────────────────
 # The orb's python-test executor uses cimg/python and has no MongoDB +
