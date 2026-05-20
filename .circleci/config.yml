@@ -5,7 +5,7 @@ version: 2.1
 orbs:
   # TEMPORARY: dev orb to verify the publish-python-package venv fix.
   # Revert to straloohealth/tools@3 once the fix is released.
-  tools: straloohealth/tools@dev:3.1.0-fix-publish-python-package-venv+1
+  tools: straloohealth/tools@dev:3.1.0-fix-publish-python-package-venv+2
 
 # ── Executors ───────────────────────────────────────────────────────────────
 # The orb's python-test executor uses cimg/python and has no MongoDB +
