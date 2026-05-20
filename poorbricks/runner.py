@@ -21,7 +21,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .faults import apply_fault
 from .inputs import (
@@ -215,7 +215,7 @@ def _read_contract_source(spark: SparkSession, table_name: str) -> DataFrame:
             f"Run the upstream pipeline first."
         )
     storage = contract.get("storage")
-    level = contract.get("level")
+    level = str(contract.get("level"))
     if storage != "postgres":
         raise NotImplementedError(
             f"ContractSource {table_name!r} has storage={storage!r}; only "
@@ -226,15 +226,84 @@ def _read_contract_source(spark: SparkSession, table_name: str) -> DataFrame:
         f"jdbc:postgresql://{settings.postgres_host}:{settings.postgres_port}"
         f"/{settings.postgres_db}"
     )
-    return (
+    reader = (
         spark.read.format("jdbc")
         .option("url", jdbc_url)
         .option("dbtable", f'"{level}"."{pg_table}"')
         .option("user", settings.postgres_user)
         .option("password", settings.postgres_password)
         .option("driver", "org.postgresql.Driver")
-        .load()
+        # Server-side cursor: stream rows in batches rather than buffering the
+        # entire result set in the executor JVM (the postgres JDBC default).
+        .option("fetchsize", "5000")
     )
+    # Partition the read across executors when the schema has a column we can
+    # range-partition on — N parallel range scans instead of one serial read.
+    for key, value in _jdbc_partition_options(
+        contract.get("schema_json"), level, pg_table, settings.read_partitions
+    ).items():
+        reader = reader.option(key, value)
+    return reader.load()
+
+
+def _jdbc_partition_options(
+    schema_json: dict[str, Any] | None,
+    level: str,
+    pg_table: str,
+    num_partitions: int,
+) -> dict[str, str]:
+    """Pick a partition column + bounds so a JDBC read fans out across executors.
+
+    Prefers a timestamp/date column, then an integral one. Returns ``{}`` (a
+    safe single-partition read) when no suitable column exists or the table is
+    empty / single-valued.
+    """
+    from pyspark.sql.types import StructType
+
+    if not schema_json:
+        return {}
+    try:
+        schema = StructType.fromJson(schema_json)
+    except Exception:
+        return {}
+
+    column: str | None = None
+    for schema_field in schema.fields:
+        type_str = str(schema_field.dataType)
+        if "TimestampType" in type_str or "DateType" in type_str:
+            column = schema_field.name
+            break
+    if column is None:
+        for schema_field in schema.fields:
+            type_str = str(schema_field.dataType)
+            if "LongType" in type_str or "IntegerType" in type_str:
+                column = schema_field.name
+                break
+    if column is None:
+        return {}
+
+    from utils.postgres import PostgresLoader
+
+    low, high = PostgresLoader().column_bounds(level, pg_table, column)
+    if low is None or high is None or low == high:
+        return {}
+    return {
+        "partitionColumn": column,
+        "lowerBound": _format_jdbc_bound(low),
+        "upperBound": _format_jdbc_bound(high),
+        "numPartitions": str(num_partitions),
+    }
+
+
+def _format_jdbc_bound(value: Any) -> str:
+    """Render a partition bound for Spark's JDBC reader (no timezone suffix)."""
+    from datetime import date, datetime
+
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    return str(value)
 
 
 def _build_production_inputs(
@@ -308,8 +377,16 @@ def _validate_contract_sources(inputs_cls: type[Inputs]) -> list[str]:
 
 
 def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
-    """Compute and verify a pipeline's output against its schema."""
-    df = cast("DataFrame", meta.original_fn(inputs))
+    """Compute and verify a pipeline's output against its schema.
+
+    The output is persisted DISK_ONLY (never held in the heap or collected to
+    the driver) so the upstream sources are read exactly once: schema
+    validation runs several scans and the persist step writes the same
+    DataFrame, and without this each of those re-reads MongoDB / JDBC.
+    """
+    from pyspark.storagelevel import StorageLevel
+
+    df = cast("DataFrame", meta.original_fn(inputs)).persist(StorageLevel.DISK_ONLY)
     errors: list[str] = []
     try:
         meta.model.verify(df, strict=True)  # type: ignore[attr-defined]

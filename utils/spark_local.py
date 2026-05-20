@@ -62,12 +62,26 @@ def build_local_spark(app_name: str = "poorbricks-local") -> SparkSession:
 
     _ensure_pyspark_env()
 
+    from poorbricks.settings import settings
+
     extra_jars = _discover_extra_jars()
+    # Scratch disk for shuffle / sort / spill — this is what lets Spark
+    # process datasets larger than the heap. Falls back to a temp dir for
+    # local dev; the worker pod mounts a sized volume via SPARK_LOCAL_DIRS.
+    local_dir = settings.spark_local_dir or tempfile.mkdtemp(
+        prefix="poorbricks-spark-local-"
+    )
     config = (
         SparkSession.builder.appName(app_name)
-        .master("local[1]")
-        .config("spark.sql.adaptive.enabled", "false")
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "false")
+        # local[*] uses every available core (respects the pod cpu limit) so
+        # partitions are processed concurrently — real parallelism. The test
+        # suite overrides this (it runs many sessions under pytest-xdist).
+        .master(settings.spark_master)
+        # Adaptive Query Execution right-sizes shuffle partitions at runtime;
+        # essential for wide transforms (joins, window functions) on data
+        # larger than memory.
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
     )
     if extra_jars:
         config = config.config("spark.jars", ",".join(extra_jars))
@@ -76,21 +90,20 @@ def build_local_spark(app_name: str = "poorbricks-local") -> SparkSession:
             "spark.sql.warehouse.dir",
             tempfile.mkdtemp(prefix="poorbricks-spark-warehouse-"),
         )
+        .config("spark.local.dir", local_dir)
         .config("spark.driver.host", "127.0.0.1")
         .config("spark.driver.bindAddress", "127.0.0.1")
         .config("spark.driver.port", "0")
         .config("spark.blockManager.port", "0")
         .config("spark.port.maxRetries", "100")
         .config("spark.ui.enabled", "false")
-        .config("spark.sql.shuffle.partitions", "2")
-        .config("spark.default.parallelism", "2")
-        .config("spark.driver.memory", "512m")
-        .config("spark.executor.memory", "512m")
-        .config("spark.memory.fraction", "0.6")
-        .config("spark.memory.storageFraction", "0.3")
+        # Many small shuffle partitions so each fits in memory / spills
+        # cleanly; AQE coalesces them down when the data is small.
+        .config("spark.sql.shuffle.partitions", "64")
+        .config("spark.default.parallelism", "64")
+        .config("spark.driver.memory", settings.spark_driver_memory)
+        .config("spark.executor.memory", settings.spark_driver_memory)
         .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.rpc.numRetries", "10")
-        .config("spark.rpc.retry.wait", "5s")
         .config("spark.network.timeout", "180s")
     )
 
