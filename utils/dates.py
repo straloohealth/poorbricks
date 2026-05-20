@@ -1,4 +1,6 @@
-"""Date utility functions for PySpark operations."""
+"""Date utility functions for PySpark operations and contract freshness."""
+
+from datetime import UTC, datetime
 
 from pyspark.sql import Column
 from pyspark.sql import functions as f
@@ -52,3 +54,33 @@ def date_trunc_week_sunday(date_col: Column) -> Column:
     # Para obter domingo: adiciona 1 dia, trunca para semana (próxima segunda), subtrai 1 dia
     # Usa to_timestamp para garantir que o resultado seja timestamp, não date
     return f.to_timestamp(f.date_sub(f.date_trunc("week", f.date_add(date_col, 1)), 1))
+
+
+def hours_since(iso: str | None, *, now: datetime | None = None) -> float | None:
+    """Return fractional hours elapsed since an ISO-8601 timestamp.
+
+    Used to age contract ``pushed_at`` values for the Streamlit status
+    dashboard. Returns ``None`` when the input is missing or unparseable.
+    Naive timestamps (the framework writes ``datetime.utcnow().isoformat()``)
+    are treated as UTC.
+
+    Args:
+        iso: ISO-8601 timestamp string, or ``None``.
+        now: Reference instant; defaults to the current UTC time.
+
+    Returns:
+        Hours elapsed (may be fractional or negative), or ``None`` if ``iso``
+        cannot be parsed.
+    """
+    if not iso:
+        return None
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    reference = now or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
+    return (reference - parsed).total_seconds() / 3600.0

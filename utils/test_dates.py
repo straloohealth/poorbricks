@@ -1,6 +1,6 @@
 """Tests for date utility functions."""
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pyspark.sql import SparkSession
@@ -12,7 +12,11 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from utils.dates import build_event_date_from_struct, date_trunc_week_sunday
+from utils.dates import (
+    build_event_date_from_struct,
+    date_trunc_week_sunday,
+    hours_since,
+)
 
 _DATE_STRUCT_SCHEMA = StructType(
     [
@@ -314,3 +318,50 @@ class TestDateTruncWeekSunday:
         assert results[0]["week"] == datetime(2023, 12, 31, 0, 0, 0)
         # Jan 1, 2024 is Monday -> returns previous Sunday (Dec 31, 2023)
         assert results[1]["week"] == datetime(2023, 12, 31, 0, 0, 0)
+
+
+class TestHoursSince:
+    """Test cases for the hours_since contract-freshness helper."""
+
+    def test_fresh_naive_timestamp(self) -> None:
+        """A naive timestamp 2h before `now` reports ~2 hours."""
+        now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+        result = hours_since("2026-05-20T10:00:00", now=now)
+        assert result == pytest.approx(2.0)
+
+    def test_stale_timestamp_over_48h(self) -> None:
+        """A timestamp 3 days old reports 72 hours (over the 48h threshold)."""
+        now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+        result = hours_since("2026-05-17T12:00:00", now=now)
+        assert result == pytest.approx(72.0)
+
+    def test_fractional_hours(self) -> None:
+        """Sub-hour ages are returned as fractions."""
+        now = datetime(2026, 5, 20, 12, 30, 0, tzinfo=UTC)
+        result = hours_since("2026-05-20T12:00:00", now=now)
+        assert result == pytest.approx(0.5)
+
+    def test_tz_aware_timestamp(self) -> None:
+        """A tz-aware ISO timestamp is aged correctly."""
+        now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+        result = hours_since("2026-05-20T06:00:00+00:00", now=now)
+        assert result == pytest.approx(6.0)
+
+    def test_defaults_to_current_time(self) -> None:
+        """Without `now`, the helper ages against the current UTC time."""
+        recent = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+        result = hours_since(recent)
+        assert result is not None
+        assert result == pytest.approx(5.0, abs=0.1)
+
+    def test_none_input_returns_none(self) -> None:
+        """A missing timestamp yields None rather than raising."""
+        assert hours_since(None) is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """An empty string yields None."""
+        assert hours_since("") is None
+
+    def test_malformed_timestamp_returns_none(self) -> None:
+        """An unparseable string yields None rather than raising."""
+        assert hours_since("not-a-timestamp") is None

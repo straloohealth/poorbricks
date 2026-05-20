@@ -34,6 +34,7 @@ fastapi = "^0.115"
 uvicorn = {extras = ["standard"], version = ">=0.30"}
 python-multipart = ">=0.0.9,<0.0.28"
 google-cloud-storage = "^2.18"
+streamlit-agraph = "^0.0.45"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4.1,<10.0.0"

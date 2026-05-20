@@ -61,6 +61,31 @@ def list_contracts() -> list[dict[str, Any]]:
     return list(cursor)
 
 
+def list_contract_details() -> list[dict[str, Any]]:
+    """Return contract summaries plus upstream inputs and baseline row count.
+
+    Heavier than :func:`list_contracts` — it also pulls each contract's
+    ``inputs`` declarations and ``profile.row_count`` — so the Streamlit
+    status dashboard and lineage DAG can be built from a single query
+    without fetching example rows or fixtures.
+    """
+    from poorbricks.settings import settings
+
+    cursor = _client()[settings.contracts_db][settings.contracts_collection].find(
+        {},
+        {
+            "table_name": 1,
+            "level": 1,
+            "storage": 1,
+            "comment": 1,
+            "pushed_at": 1,
+            "inputs": 1,
+            "profile.row_count": 1,
+        },
+    )
+    return list(cursor)
+
+
 def profile_dataframe(df: DataFrame) -> dict[str, Any]:
     """Compute row count, null rates per column, and enum samples for low-cardinality fields."""
     row_count = df.count()
@@ -138,6 +163,7 @@ def push_contract(
 
 __all__ = [
     "fetch_contract",
+    "list_contract_details",
     "list_contracts",
     "profile_dataframe",
     "push_contract",
