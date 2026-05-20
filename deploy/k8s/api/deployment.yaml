@@ -20,7 +20,9 @@ spec:
         poorbricks.io/dags: "true"
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+          # {{IMAGE_TAG}} is replaced with the commit SHA by the orb's
+          # deploy-k8s job (replace-vars). build-docker pushes this image.
+          image: gcr.io/inner-autonomy-371516/poorbricks/api:{{IMAGE_TAG}}
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -31,7 +33,7 @@ spec:
             - name: POORBRICKS_API_DAGS_DIR
               value: /opt/airflow/dags
             - name: POORBRICKS_API_WORKER_IMAGE
-              value: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+              value: gcr.io/inner-autonomy-371516/poorbricks/api:{{IMAGE_TAG}}
             - name: POORBRICKS_API_WORKER_NAMESPACE
               value: airflow
             - name: POORBRICKS_API_CODE_PVC_CLAIM

@@ -167,6 +167,7 @@ notebooks/
 *.DS_Store
 
 test*.xml
+test-results/
 
 
 # personal development notes
