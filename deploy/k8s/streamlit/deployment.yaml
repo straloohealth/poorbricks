@@ -42,12 +42,12 @@ spec:
             - name: MONGO_URI
               valueFrom:
                 secretKeyRef:
-                  name: poorbricks-streamlit-mongodb-creds
+                  name: poorbricks-server-mongodb-creds
                   key: MONGO_URI
             - name: CONTRACTS_MONGO_URI
               valueFrom:
                 secretKeyRef:
-                  name: poorbricks-streamlit-mongodb-creds
+                  name: poorbricks-server-mongodb-creds
                   key: MONGO_URI
             - name: CONTRACTS_DB
               value: poorbricks

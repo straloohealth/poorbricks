@@ -92,6 +92,8 @@ def test_verify_cli_runs_from_installed_wheel_and_reports_missing_contract(
             "local",
             "--tables-root",
             str(TABLES_ROOT),
+            "--contract-url",
+            "",
         ],
         text=True,
         capture_output=True,

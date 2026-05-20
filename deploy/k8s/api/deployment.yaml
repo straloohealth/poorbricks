@@ -40,8 +40,19 @@ spec:
               value: airflow-dags
             - name: POORBRICKS_API_CODE_PVC_ROOT
               value: __code__
+            # Atlas connection string (dynamic read-only credentials) synced
+            # from Vault by the Vault Secrets Operator. Worker pods inherit
+            # this to read bronze sources + the poorbricks contracts DB.
             - name: MONGO_URI
-              value: "mongodb://mongo.airflow.svc.cluster.local:27017"
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-server-mongodb-creds
+                  key: MONGO_URI
+            - name: CONTRACTS_MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: poorbricks-server-mongodb-creds
+                  key: MONGO_URI
             - name: CONTRACTS_DB
               value: poorbricks
             - name: CONTRACTS_COLLECTION

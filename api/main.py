@@ -4,11 +4,14 @@ Single endpoint ``POST /v1/upload`` does:
 
 1. Extract the uploaded tarball into a temp dir.
 2. ``verify_local`` → 422 on any contract mismatch.
-3. ``verify_ci`` (fixtures mode) → 422 on rule / expectation failure.
-4. Parse ``workflows/*.yaml`` → generate DAG source.
-5. ``DagStore.put`` for each workflow.
-6. ``DagStore.prune`` so deletions in the table-repo propagate.
-7. Return JSON with the generated DAG names, pruned names, and profiles.
+3. Parse ``workflows/*.yaml`` → generate DAG source.
+4. ``DagStore.put`` for each workflow.
+5. ``DagStore.prune`` so deletions in the table-repo propagate.
+6. Return JSON with the generated DAG names and pruned names.
+
+Spark fixture tests (verify_ci) run in the consumer repo's CI before upload
+and are not repeated here to avoid long-running requests that timeout the
+Tailscale HTTP proxy.
 """
 
 from __future__ import annotations
@@ -123,7 +126,6 @@ def _handle_upload(
         _extract_safely(payload, root)
         tables_dir = root / "tables"
         workflows_dir = root / "workflows"
-        profiles_dir = root / "profiles"
 
         if not tables_dir.is_dir():
             return _fail("missing 'tables/' directory in uploaded tarball")
@@ -131,25 +133,15 @@ def _handle_upload(
             return _fail("missing 'workflows/' directory in uploaded tarball")
 
         # Local verify — contract schemas only, no Spark.
-        from poorbricks.verify import verify_ci, verify_local
+        # Spark fixture tests run in the consumer repo's CI (tables-test job)
+        # before upload, so we skip the expensive verify_ci here.
+        from poorbricks.verify import verify_local
 
         contract_errors = verify_local(tables_root=tables_dir)
         if contract_errors:
             return _fail(
                 "verify_local failed",
                 errors=[e.format() for e in contract_errors],
-            )
-
-        # CI verify — full Spark run against fixtures, exports profiles.
-        ci_errors = verify_ci(
-            tables_root=tables_dir,
-            export_dir=profiles_dir,
-            mode="fixtures",
-        )
-        if ci_errors:
-            return _fail(
-                "verify_ci failed",
-                errors=[e.format() for e in ci_errors],
             )
 
         # Parse workflows + generate DAGs.
@@ -182,7 +174,6 @@ def _handle_upload(
             dag_names.append(wf.name)
 
         pruned = dag_store.prune(prefix, keep=set(dag_names))
-        profiles = _load_profiles(profiles_dir)
 
         return {
             "ok": True,
@@ -191,7 +182,6 @@ def _handle_upload(
             "dag_names": sorted(dag_names),
             "pruned": pruned,
             "workflows": [_serialize(wf) for wf in workflows],
-            "profiles": profiles,
         }
 
 
