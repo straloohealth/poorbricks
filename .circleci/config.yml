@@ -3,7 +3,9 @@ version: 2.1
 # The Straloo tools orb provides install-python-deps, wait-for-ports-ready,
 # build-docker, deploy-k8s and publish-python-package.
 orbs:
-  tools: straloohealth/tools@3
+  # TEMPORARY: dev orb to verify the publish-python-package venv fix.
+  # Revert to straloohealth/tools@3 once the fix is released.
+  tools: straloohealth/tools@dev:3.1.0-fix-publish-python-package-venv+1
 
 # ── Executors ───────────────────────────────────────────────────────────────
 # The orb's python-test executor uses cimg/python and has no MongoDB +
