@@ -1,40 +1,13 @@
 version: 2.1
 
-# ── Anchors ────────────────────────────────────────────────────────────────
-restore_cache: &restore_cache
-  restore_cache:
-    keys:
-      - v3-deps-{{ checksum "poetry.lock" }}
-      - v3-deps-
+# The Straloo tools orb provides install-python-deps, wait-for-ports-ready,
+# build-docker, deploy-k8s and publish-python-package.
+orbs:
+  tools: straloohealth/tools@3
 
-install_deps: &install_deps
-  run:
-    name: Install dependencies
-    environment:
-      PIP_DEFAULT_TIMEOUT: "180"
-      PIP_RETRIES: "5"
-    command: |
-      pip install --quiet poetry
-      for attempt in 1 2 3; do
-        if poetry install --no-interaction; then
-          break
-        fi
-        echo "poetry install attempt $attempt failed; retrying in 15s..."
-        sleep 15
-      done
-
-save_cache: &save_cache
-  save_cache:
-    key: v3-deps-{{ checksum "poetry.lock" }}
-    paths:
-      - /root/.cache/pypoetry/virtualenvs
-
-setup_steps: &setup_steps
-  - checkout
-  - *restore_cache
-  - *install_deps
-  - *save_cache
-
+# ── Executors ───────────────────────────────────────────────────────────────
+# The orb's python-test executor uses cimg/python and has no MongoDB +
+# PostgreSQL sidecar combo, so the Spark-capable image stacks stay here.
 single_image: &single_image
   - image: docker.io/danielspeixoto/databricks
 
@@ -47,7 +20,15 @@ docker_images: &docker_images
       POSTGRES_USER: analytics
       POSTGRES_PASSWORD: analytics
 
-# ── Jobs ───────────────────────────────────────────────────────────────────
+# Restore/install/save the dependency cache via the orb. private-registry is
+# off: poorbricks-framework has only public-PyPI deps and these jobs run
+# without the gke context.
+install_deps: &install_deps
+  tools/install-python-deps:
+    private-registry: false
+    cache-path: /root/.cache/pypoetry
+
+# ── Jobs ────────────────────────────────────────────────────────────────────
 jobs:
 
   lint-and-type-check:
@@ -55,9 +36,7 @@ jobs:
     resource_class: medium
     steps:
       - checkout
-      - *restore_cache
       - *install_deps
-      - *save_cache
       - run:
           name: Ruff lint
           command: poetry run ruff check .
@@ -73,65 +52,54 @@ jobs:
     resource_class: medium
     steps:
       - checkout
-      - *restore_cache
       - *install_deps
-      - *save_cache
-      - run:
-          name: Wait for MongoDB
-          command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
-
+      - tools/wait-for-ports-ready:
+          ports: "27017"
       - run:
           name: Unit tests (poorbricks + utils + tables + validation)
           command: >
             poetry run pytest poorbricks/ utils/ tables/ validation/
-            -n 2 --dist loadgroup
-            -m "not integration and not slow"
-            --junitxml=test-results-unit.xml
-            --tb=short -v
+            -n 2 -m "not integration and not slow"
       - run:
           name: Architecture validation
           command: poetry run poorbricks verify --mode arch
       - store_test_results:
-          path: test-results-unit.xml
+          path: test-results
 
   multi-repo-tests:
     docker: *docker_images
     resource_class: medium
     steps:
       - checkout
-      - *restore_cache
       - *install_deps
-      - *save_cache
       - run:
           name: Multi-repo contract verification scenarios
+          # Resets addopts to drop xdist (-n 4); --junitxml must be repeated
+          # here because the reset also clears the default from pyproject.toml.
           command: >
             poetry run pytest tests/test_multi_repo.py
             -o "addopts="
-            --junitxml=test-results-multi-repo.xml
+            --junitxml=test-results/junit.xml
             --tb=short -v
       - store_test_results:
-          path: test-results-multi-repo.xml
+          path: test-results
 
   build-and-smoke:
     docker: *docker_images
     resource_class: medium
     steps:
       - checkout
-      - *restore_cache
       - *install_deps
-      - *save_cache
-      - run:
-          name: Wait for MongoDB
-          command: for i in {1..30}; do timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break; sleep 1; done
+      - tools/wait-for-ports-ready:
+          ports: "27017"
       - run:
           name: Wheel-install boundary smoke test
           command: >
             poetry run pytest tests/test_wheel_install_boundary.py
-            -m slow -n 0 -v --tb=short
-            --junitxml=test-results-smoke.xml
+            -m slow -n 0
           no_output_timeout: 10m
       - store_test_results:
-          path: test-results-smoke.xml
+          path: test-results
       - store_artifacts:
           path: dist
           destination: wheel
@@ -141,108 +109,31 @@ jobs:
     resource_class: large
     steps:
       - checkout
-      - *restore_cache
       - *install_deps
-      - *save_cache
-      - run:
-          name: Wait for MongoDB and PostgreSQL
-          command: |
-            echo "Waiting for MongoDB on port 27017..."
-            for i in {1..30}; do
-              timeout 1 bash -c 'echo > /dev/tcp/localhost/27017' 2>/dev/null && echo "MongoDB ready" && break
-              sleep 1
-            done
-            echo "Waiting for PostgreSQL on port 5432..."
-            for i in {1..30}; do
-              timeout 1 bash -c 'echo > /dev/tcp/localhost/5432' 2>/dev/null && echo "PostgreSQL ready" && break
-              sleep 1
-            done
+      - tools/wait-for-ports-ready:
+          ports: "27017 5432"
       - run:
           name: Distributed pipeline integration test (bronze → silver → gold)
           command: >
             poetry run pytest tests/test_distributed_pipeline.py
-            -m integration -n 0 -v --tb=short
-            --junitxml=test-results-integration.xml
+            -m integration -n 0
           no_output_timeout: 30m
       - store_test_results:
-          path: test-results-integration.xml
+          path: test-results
 
   workflow-compilation-tests:
     docker: *single_image
     resource_class: medium
     steps:
       - checkout
-      - *restore_cache
       - *install_deps
-      - *save_cache
       - run:
           name: Workflow parsing and DAG generation tests
-          command: >
-            poetry run pytest tests/test_infrastructure_e2e.py
-            -v --tb=short
-            --junitxml=test-results-workflow.xml
+          command: poetry run pytest tests/test_infrastructure_e2e.py
       - store_test_results:
-          path: test-results-workflow.xml
+          path: test-results
 
-  publish-package:
-    docker:
-      - image: docker.io/danielspeixoto/gke
-    resource_class: small
-    steps:
-      - checkout
-      - run:
-          name: Authenticate to GCP
-          command: deployer auth gke
-      - run:
-          name: Build wheel
-          command: |
-            pip install --quiet poetry
-            poetry build
-      - run:
-          name: Publish to GCP Artifact Registry
-          command: |
-            pip install --quiet twine
-            twine upload \
-              --repository-url https://us-central1-python.pkg.dev/inner-autonomy-371516/python/ \
-              --username oauth2accesstoken \
-              --password "$(gcloud auth print-access-token)" \
-              dist/*
-
-  image-release:
-    docker:
-      - image: docker.io/danielspeixoto/gke
-    resource_class: small
-    steps:
-      - checkout
-      - run:
-          name: Authenticate to GCP
-          command: deployer auth gke
-      - run:
-          name: Submit Cloud Build (api image)
-          command: |
-            gcloud builds submit \
-              --config=cloudbuild.yaml \
-              --substitutions=SHORT_SHA="${CIRCLE_SHA1:0:7}" \
-              .
-          no_output_timeout: 30m
-      - run:
-          name: Rollout restart poorbricks-server
-          command: |
-            kubectl rollout restart deployment/poorbricks-server -n airflow
-            kubectl rollout status deployment/poorbricks-server -n airflow --timeout=5m
-      - run:
-          name: Rollout restart poorbricks-streamlit
-          # Shares the api image. Skipped until the deployment has been
-          # applied once via `kubectl apply -f deploy/k8s/streamlit/`.
-          command: |
-            if kubectl get deployment poorbricks-streamlit -n airflow >/dev/null 2>&1; then
-              kubectl rollout restart deployment/poorbricks-streamlit -n airflow
-              kubectl rollout status deployment/poorbricks-streamlit -n airflow --timeout=5m
-            else
-              echo "poorbricks-streamlit not deployed yet — skipping"
-            fi
-
-# ── Workflows ──────────────────────────────────────────────────────────────
+# ── Workflows ───────────────────────────────────────────────────────────────
 workflows:
   test:
     when:
@@ -272,17 +163,21 @@ workflows:
           requires: [lint-and-type-check]
       - integration-tests:
           requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
-      - publish-package:
-          context:
-            - gke
-          requires:
-            - integration-tests
-            - workflow-compilation-tests
-
-  image-release:
-    when:
-      equal: [main, << pipeline.git.branch >>]
-    jobs:
-      - image-release:
-          context:
-            - gke
+      - tools/publish-python-package:
+          context: [gke]
+          requires: [integration-tests, workflow-compilation-tests]
+      - tools/build-docker:
+          context: [gke]
+          image: poorbricks/api
+          dockerfile: api/Dockerfile
+          requires: [integration-tests, workflow-compilation-tests]
+      - tools/deploy-k8s:
+          name: deploy-api
+          context: [gke]
+          kubernetes-directory: deploy/k8s/api
+          requires: [tools/build-docker]
+      - tools/deploy-k8s:
+          name: deploy-streamlit
+          context: [gke]
+          kubernetes-directory: deploy/k8s/streamlit
+          requires: [tools/build-docker]

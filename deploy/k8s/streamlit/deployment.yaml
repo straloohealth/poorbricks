@@ -20,7 +20,9 @@ spec:
         poorbricks.io/dags: "true"
       containers:
         - name: streamlit
-          image: us-central1-docker.pkg.dev/inner-autonomy-371516/poorbricks/api:latest
+          # Shares the api image; {{IMAGE_TAG}} is replaced with the commit
+          # SHA by the orb's deploy-k8s job (replace-vars).
+          image: gcr.io/inner-autonomy-371516/poorbricks/api:{{IMAGE_TAG}}
           imagePullPolicy: Always
           command:
             - streamlit
