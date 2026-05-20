@@ -72,6 +72,9 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--disable-warnings",
+    # JUnit report is emitted by default so CI jobs do not pass --junitxml;
+    # each CircleCI job stores test-results/ via store_test_results.
+    "--junitxml=test-results/junit.xml",
 ]
 
 markers = [
