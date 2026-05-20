@@ -95,6 +95,9 @@ jobs:
     resource_class: medium
     steps:
       - checkout
+      # The wheel-boundary smoke test runs `poorbricks verify --mode local`,
+      # which reaches the contracts server over the Tailscale-only ingress.
+      - tools/join-company-network
       - *install_deps
       - tools/wait-for-ports-ready:
           ports: "27017"
@@ -149,7 +152,8 @@ workflows:
       - lint-and-type-check
       - unit-tests
       - multi-repo-tests
-      - build-and-smoke
+      - build-and-smoke:
+          context: [tailscale]
       - workflow-compilation-tests
       - integration-tests:
           requires: [unit-tests, multi-repo-tests, build-and-smoke, lint-and-type-check]
@@ -164,6 +168,7 @@ workflows:
       - multi-repo-tests:
           requires: [lint-and-type-check]
       - build-and-smoke:
+          context: [tailscale]
           requires: [lint-and-type-check]
       - workflow-compilation-tests:
           requires: [lint-and-type-check]

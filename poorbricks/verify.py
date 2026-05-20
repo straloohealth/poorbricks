@@ -79,25 +79,13 @@ def _default_fetcher() -> ContractFetcher:
 def _http_fetcher(base_url: str) -> ContractFetcher:
     """Fetch contracts from the poorbricks server HTTP endpoint.
 
-    Raises KeyError when the contract cannot be retrieved — either the
-    server returns 404, or the server is unreachable (DNS failure, refused
-    connection, timeout). Callers treat KeyError as a missing contract, so
-    ``verify --mode local`` degrades to reporting ``missing_contract``
-    instead of crashing when run without access to the contracts server.
+    Raises KeyError when the server returns 404 (contract not found).
     """
     import requests
 
     def fetch(table_name: str) -> dict[str, Any]:
         url = f"{base_url.rstrip('/')}/v1/contracts/{table_name}"
-        try:
-            resp = requests.get(url, timeout=10)
-        except requests.RequestException as exc:
-            print(
-                f"warning: contracts server unreachable, treating "
-                f"{table_name!r} as a missing contract ({exc})",
-                file=sys.stderr,
-            )
-            raise KeyError(table_name) from exc
+        resp = requests.get(url, timeout=10)
         if resp.status_code == 404:
             raise KeyError(table_name)
         resp.raise_for_status()
