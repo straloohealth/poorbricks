@@ -11,5 +11,3 @@ tasks:
 
   - id: gold_patients
     pipeline: postgres:gold_patients
-    depends_on:
-      - happy_path

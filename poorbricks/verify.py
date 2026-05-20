@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from poorbricks.arch import ArchError, check_architecture
+from poorbricks.depgraph import CycleError, topological_order
 from poorbricks.discovery import discover_all_pipelines
 from poorbricks.inputs import ContractSource, MongoSource, TableSource
 from poorbricks.registry import PipelineMeta, all_pipelines
@@ -43,7 +44,7 @@ class ContractError:
     pipeline_key: str
     input_name: str
     upstream: str
-    reason: str  # "missing_contract" | "schema_drift"
+    reason: str  # "missing_contract" | "schema_drift" | "cycle"
     details: list[str] = field(default_factory=list)
 
     def format(self) -> str:
@@ -181,6 +182,24 @@ def _check_pipeline_contracts(
                     )
                 )
     return errors
+
+
+def _dependency_cycle(local_tables: dict[str, PipelineMeta]) -> list[str] | None:
+    """Return the nodes of a dependency cycle among in-bundle tables, or None."""
+    graph = {
+        name: {
+            spec.table_name
+            for spec in meta.inputs_cls.sources().values()
+            if isinstance(spec, ContractSource | TableSource)
+            and spec.table_name in local_tables
+        }
+        for name, meta in local_tables.items()
+    }
+    try:
+        topological_order(graph)
+    except CycleError as exc:
+        return exc.nodes
+    return None
 
 
 @dataclass
@@ -341,6 +360,16 @@ def verify_local(
         meta.table_name: meta for meta in pipelines.values()
     }
     errors: list[ContractError] = []
+    cycle = _dependency_cycle(local_tables)
+    if cycle is not None:
+        errors.append(
+            ContractError(
+                pipeline_key="(dependency graph)",
+                input_name="cycle",
+                upstream=" -> ".join(cycle),
+                reason="cycle",
+            )
+        )
     for key, meta in pipelines.items():
         errors.extend(_check_pipeline_contracts(key, meta, fetcher, local_tables))
     return errors
