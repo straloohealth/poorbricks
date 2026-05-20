@@ -1,4 +1,4 @@
-"""Phase 0 baseline harness for the out-of-core ingest refactor.
+"""Memory-stress-test harness for the out-of-core ingest refactor.
 
 Seeds a synthetic ``watson.notes`` collection of a chosen size into the local
 MongoDB, runs the real ``notes`` bronze pipeline end to end (MongoDB -> Spark
@@ -7,11 +7,13 @@ MongoDB, runs the real ``notes`` bronze pipeline end to end (MongoDB -> Spark
 
 Run one size per process so each measurement starts from a clean slate::
 
-    poetry run python scripts/measure_ingest.py --rows 20000 --content-bytes 1500
+    poetry run python experiments/memory-stress-test/measure_ingest.py \
+        --rows 20000 --content-bytes 1500
 
-The companion driver ``scripts/measure_curve.sh`` runs several sizes and
-prints the memory-vs-size curve. A linear curve is the bug; a flat curve is
-the fixed, out-of-core behaviour.
+The companion driver ``experiments/memory-stress-test/measure_curve.sh`` runs
+several sizes and prints the memory-vs-size curve. A linear curve is the bug;
+a flat curve is the fixed, out-of-core behaviour. See the README in this
+directory for the full experiment write-up.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from pathlib import Path
 
 import psutil  # type: ignore[import-untyped]
 
-FRAMEWORK_REPO = Path(__file__).resolve().parents[1]
+FRAMEWORK_REPO = Path(__file__).resolve().parents[2]
 WATSON_REPO = Path(
     os.environ.get("WATSON_REPO", "/home/danielspeixoto/repositories/watson")
 )
