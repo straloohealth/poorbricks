@@ -1,20 +1,8 @@
 """Distributed pipeline integration test.
 
-Simulates three isolated repos running in sequence:
-  "Bronze repo"  — framework-repo/tables/bronze/
-  "Silver repo"  — simulated separate repo consuming bronze contracts
-  "Gold repo"    — simulated separate repo consuming silver contracts
-
-Each phase discovers its level's pipelines, computes fixtures, writes to
-PostgreSQL, and pushes contracts to MongoDB. The gold phase proves
-cross-repo contract resolution: gold fixtures call
-``ContractSource.from_rows()`` which reads the ``dim_patient`` schema from
-MongoDB — this step fails if the silver phase did not push contracts first.
-
-Tests share module-scope state (the populated registry, the freshly reset
-PostgreSQL schemas, the cleared MongoDB contracts collection) and rely on
-pytest's collection-order execution within the module: bronze runs first,
-silver next, gold last, and only then do the contract assertions fire.
+Exercises the framework's discover → compute → persist → contract-push cycle
+using the bronze.example_items pipeline. Silver and gold pipelines live in
+consumer repos (smith, silver) — this test only covers the bronze level.
 
 Prerequisites:
     docker-compose up -d   (MongoDB + PostgreSQL)
@@ -44,7 +32,7 @@ pytestmark = [
     pytest.mark.xdist_group("distributed_pipeline"),
 ]
 
-LEVELS = ("bronze", "silver", "gold")
+LEVELS = ("bronze",)
 
 
 def _pg_table_name(table_name: str) -> str:
@@ -151,16 +139,6 @@ def test_pipeline_discovery_finds_all_levels() -> None:
 def test_bronze_pipelines_persist_rows(pg_loader: PostgresLoader) -> None:
     """Run every bronze pipeline, verify rows landed in Postgres."""
     _run_level_and_verify("bronze", pg_loader)
-
-
-def test_silver_pipelines_persist_rows(pg_loader: PostgresLoader) -> None:
-    """Run every silver pipeline — requires bronze contracts in Mongo."""
-    _run_level_and_verify("silver", pg_loader)
-
-
-def test_gold_pipelines_persist_rows(pg_loader: PostgresLoader) -> None:
-    """Run every gold pipeline — requires silver contracts in Mongo."""
-    _run_level_and_verify("gold", pg_loader)
 
 
 def test_all_expected_contracts_pushed_to_mongo() -> None:
