@@ -74,13 +74,13 @@ def _smith_users_contract() -> dict[str, Any]:
     struct = StructType(
         [
             StructField("mongo_id", StringType(), nullable=True),
-            StructField("externalId", StringType(), nullable=True),
+            StructField("external_id", StringType(), nullable=True),
             StructField("name", StringType(), nullable=True),
             StructField("email", StringType(), nullable=True),
             StructField("phone", StringType(), nullable=True),
             StructField("origin", StringType(), nullable=True),
             StructField("active", BooleanType(), nullable=True),
-            StructField("createdAt", TimestampType(), nullable=True),
+            StructField("created_at", TimestampType(), nullable=True),
             StructField("birth_date", TimestampType(), nullable=True),
             StructField("cpf", StringType(), nullable=True),
         ]

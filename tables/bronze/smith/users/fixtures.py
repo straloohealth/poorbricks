@@ -25,16 +25,15 @@ def smoke() -> SmithUsersInputs:
             "upstream": [
                 {
                     "mongo_id": "507f1f77bcf86cd799439011",
-                    "externalId": "AON12345",
+                    "external_id": "AON12345",
                     "name": "John Doe",
                     "email": "john@aon.com",
                     "phone": "+1-555-0100",
                     "origin": "aon",
                     "active": True,
-                    "createdAt": _NOW,
+                    "created_at": _NOW,
                     "birth_date": _BIRTH,
                     "cpf": None,
-                    "extraFields": [{"fieldName": "company", "fieldValue": "AON Corp"}],
                 }
             ]
         }

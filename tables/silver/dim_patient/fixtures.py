@@ -24,7 +24,7 @@ def _user(
 ) -> dict:
     return {
         "mongo_id": mongo_id,
-        "externalId": external_id
+        "external_id": external_id
         if external_id is not None
         else f"mongo-{mongo_id[-4:]}",
         "name": "Test Patient",
@@ -32,10 +32,9 @@ def _user(
         "phone": None,
         "origin": origin,
         "active": active,
-        "createdAt": created_at,
+        "created_at": created_at,
         "birth_date": datetime(1990, 5, 20, 0, 0, 0),
         "cpf": None,
-        "extraFields": None,
     }
 
 

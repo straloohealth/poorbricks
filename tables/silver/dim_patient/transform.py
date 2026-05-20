@@ -21,12 +21,7 @@ if TYPE_CHECKING:
     from tables.silver.dim_patient.pipeline import DimPatientInputs
 
 
-# Column-mapping reality, May 2026:
-# bronze.smith_users (actual production shape from MongoDB) carries:
-#   externalId, name, email, phone, origin, active, createdAt,
-#   birth_date, cpf, extraFields
-# Silver dimension maps these to lowercase snake_case for consistency.
-_TRIMMABLE_PRESENT_COLS = ("externalId", "name", "email", "phone", "origin")
+_TRIMMABLE_PRESENT_COLS = ("external_id", "name", "email", "phone", "origin")
 
 
 def compute(inputs: DimPatientInputs) -> DataFrame:
@@ -45,7 +40,7 @@ def compute(inputs: DimPatientInputs) -> DataFrame:
     # Filter out rows with null mongo_id — they have no valid key.
     with_key = trimmed.filter(f.col("mongo_id").isNotNull())
     window = Window.partitionBy("mongo_id").orderBy(
-        f.col("createdAt").desc_nulls_last()
+        f.col("created_at").desc_nulls_last()
     )
     deduped = (
         with_key.withColumn("_rn", f.row_number().over(window))
@@ -60,7 +55,7 @@ def compute(inputs: DimPatientInputs) -> DataFrame:
         f.col("email"),
         f.col("phone"),
         f.col("birth_date"),
-        f.col("createdAt").alias("created_at"),
+        f.col("created_at"),
         f.col("origin").alias("origin_slug"),
         f.coalesce(f.col("active"), f.lit(False)).alias("is_active"),
         f.lit(False).alias("is_high_risk"),
