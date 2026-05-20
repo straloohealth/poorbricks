@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     postgres_user: str = "analytics"
     postgres_password: str = "analytics"
 
+    # Out-of-core execution tuning. The framework processes datasets larger
+    # than RAM by partitioning reads, spilling shuffles to disk, and streaming
+    # writes — never collecting a whole dataset into the driver.
+    spark_master: str = "local[*]"  # all cores; the test suite bounds this
+    spark_driver_memory: str = "2g"
+    spark_local_dir: str | None = None  # scratch dir for shuffle/sort spill
+    read_partitions: int = 16  # parallelism for partitioned Mongo / JDBC reads
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

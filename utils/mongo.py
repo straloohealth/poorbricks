@@ -1,45 +1,22 @@
+"""Lazy, partitioned MongoDB reader.
+
+A collection is split into ``settings.read_partitions`` contiguous ranges over
+``_id`` (via ``$bucketAuto``, which builds balanced buckets server-side). Each
+Spark partition opens its own cursor and reads just its range inside an
+executor — documents are never collected into the driver, so memory stays
+bounded no matter how large the collection is.
+"""
+
+from __future__ import annotations
+
 import re
+from collections.abc import Callable, Iterator
 from typing import Any
 
-import pymongo as pm
+from bson import Decimal128, ObjectId
+from bson.int64 import Int64
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StructType
-
-
-def _find_all(
-    mongo_uri: str, db_name: str, collection_name: str
-) -> list[dict[str, Any]]:
-    mongo_client: pm.MongoClient[dict[str, Any]] = pm.MongoClient(mongo_uri)
-    collection = mongo_client[db_name][collection_name]
-    items = list(collection.find({}))
-    return items
-
-
-def _resolve_dot_key(doc: dict[str, Any], key: str) -> Any:
-    """Resolve a dot-notation key (e.g. 'source.documentId') from a nested dict."""
-    parts = key.split(".", 1)
-    value = doc[parts[0]]
-    if len(parts) > 1 and isinstance(value, dict):
-        return _resolve_dot_key(value, parts[1])
-    return value
-
-
-def _sanitize_value(v: Any) -> Any:
-    """Recursively convert BSON types to Python-native equivalents for PySpark compatibility."""
-    from bson import Decimal128, ObjectId
-    from bson.int64 import Int64
-
-    if isinstance(v, ObjectId):
-        return str(v)
-    if isinstance(v, Int64):
-        return int(v)
-    if isinstance(v, Decimal128):
-        return float(v.to_decimal())
-    if isinstance(v, dict):
-        return {dk: _sanitize_value(dv) for dk, dv in v.items()}
-    if isinstance(v, list):
-        return [_sanitize_value(item) for item in v]
-    return v
 
 
 def _camel_to_snake(name: str) -> str:
@@ -47,32 +24,123 @@ def _camel_to_snake(name: str) -> str:
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
-def _rename_camel_keys(
-    rows: list[dict[str, Any]], schema_field_names: set[str]
-) -> list[dict[str, Any]]:
-    """Rename camelCase document keys to snake_case when the snake_case form is in the schema."""
-    if not rows:
-        return rows
-    sample_keys: set[str] = set()
-    for doc in rows:
-        sample_keys.update(doc.keys())
-    rename_map = {
-        k: _camel_to_snake(k)
-        for k in sample_keys
-        if _camel_to_snake(k) != k and _camel_to_snake(k) in schema_field_names
-    }
-    if not rename_map:
-        return rows
-    return [{rename_map.get(k, k): v for k, v in doc.items()} for doc in rows]
+def _sanitize_value(value: Any) -> Any:
+    """Recursively convert BSON types to Python-native equivalents for Spark.
 
-
-def _sanitize_bson_types(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert BSON types to Python-native equivalents for PySpark compatibility.
-
-    Handles ObjectId → str, Int64 → int, Decimal128 → float, and recurses into
-    nested dicts and lists at any depth.
+    Handles ObjectId -> str, Int64 -> int, Decimal128 -> float, and recurses
+    into nested dicts and lists at any depth.
     """
-    return [{k: _sanitize_value(v) for k, v in doc.items()} for doc in rows]
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, Int64):
+        return int(value)
+    if isinstance(value, Decimal128):
+        return float(value.to_decimal())
+    if isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    return value
+
+
+def _resolve_id_field(schema: StructType) -> str | None:
+    """Find the schema field that should receive MongoDB's ``_id`` value.
+
+    MongoDB documents key on ``_id``; bronze schemas rename it to a
+    string-typed ``*_id`` field (e.g. ``mongo_id``). Returns None when the
+    schema keeps ``_id`` verbatim.
+    """
+    field_names = {field.name for field in schema.fields}
+    if "_id" in field_names:
+        return None
+    for field in schema.fields:
+        type_str = str(field.dataType)
+        if field.name.endswith("_id") and (
+            "StringType" in type_str or "string" in type_str
+        ):
+            return field.name
+    return None
+
+
+def _prepare_doc(
+    doc: dict[str, Any], id_field: str | None, field_names: list[str]
+) -> tuple[Any, ...]:
+    """Map one raw MongoDB document to a schema-ordered tuple.
+
+    Applies the ``_id`` -> ``id_field`` rename, camelCase -> snake_case key
+    renames (only when the snake form is a schema field), and BSON-type
+    sanitisation. Returns values ordered to match ``field_names``.
+    """
+    field_set = set(field_names)
+    mapped: dict[str, Any] = {}
+    for key, value in doc.items():
+        if key == "_id" and id_field is not None:
+            mapped[id_field] = value
+            continue
+        snake = _camel_to_snake(key)
+        if snake != key and snake in field_set:
+            mapped[snake] = value
+        else:
+            mapped[key] = value
+    return tuple(_sanitize_value(mapped.get(name)) for name in field_names)
+
+
+def _resolve_partition_bounds(
+    mongo_uri: str, db_name: str, collection_name: str, num_partitions: int
+) -> list[tuple[Any, Any, bool]]:
+    """Split a collection into <= ``num_partitions`` contiguous ``_id`` ranges.
+
+    Uses ``$bucketAuto`` so MongoDB computes balanced, roughly equal-count
+    buckets server-side; only the tiny boundary documents reach the driver.
+    Returns ``(lo, hi, is_last)`` tuples — the last range includes ``hi``.
+    """
+    import pymongo as pm
+
+    client: pm.MongoClient = pm.MongoClient(mongo_uri)
+    try:
+        collection = client[db_name][collection_name]
+        if collection.estimated_document_count() == 0:
+            return []
+        buckets = list(
+            collection.aggregate(
+                [{"$bucketAuto": {"groupBy": "$_id", "buckets": num_partitions}}],
+                allowDiskUse=True,
+            )
+        )
+        bounds: list[tuple[Any, Any, bool]] = []
+        for index, bucket in enumerate(buckets):
+            edges = bucket["_id"]
+            bounds.append((edges["min"], edges["max"], index == len(buckets) - 1))
+        return bounds
+    finally:
+        client.close()
+
+
+def _make_range_reader(
+    mongo_uri: str,
+    db_name: str,
+    collection_name: str,
+    id_field: str | None,
+    field_names: list[str],
+) -> Callable[[tuple[Any, Any, bool]], Iterator[tuple[Any, ...]]]:
+    """Build the ``flatMap`` function that reads one ``_id`` range on an executor."""
+
+    def _read_range(
+        bound: tuple[Any, Any, bool],
+    ) -> Iterator[tuple[Any, ...]]:
+        import pymongo as pm
+
+        lo, hi, is_last = bound
+        upper_op = "$lte" if is_last else "$lt"
+        query = {"_id": {"$gte": lo, upper_op: hi}}
+        client: pm.MongoClient = pm.MongoClient(mongo_uri)
+        try:
+            for doc in client[db_name][collection_name].find(query):
+                yield _prepare_doc(doc, id_field, field_names)
+        finally:
+            client.close()
+
+    return _read_range
 
 
 def get_all(
@@ -81,49 +149,37 @@ def get_all(
     collection_name: str,
     schema: StructType,
 ) -> DataFrame:
-    """Fetch all documents from a MongoDB collection and return as DataFrame.
+    """Read a MongoDB collection as a lazy, partitioned Spark DataFrame.
+
+    The collection is split into ``settings.read_partitions`` ranges; each
+    Spark partition reads its own range from an executor when an action runs.
+    Documents are never materialised in the driver.
 
     Args:
-        mongo_uri: MongoDB connection URI (e.g. mongodb://localhost:27017)
-        db_name: Database name
-        collection_name: Collection name
-        schema: PySpark StructType for the result DataFrame
+        mongo_uri: MongoDB connection URI.
+        db_name: Database name.
+        collection_name: Collection name.
+        schema: PySpark StructType for the result DataFrame.
 
     Returns:
-        PySpark DataFrame with documents from the collection
+        PySpark DataFrame with the collection's documents.
     """
     spark = SparkSession.getActiveSession()
     if spark is None:
         raise RuntimeError("No active SparkSession found.")
-    rows = _find_all(mongo_uri, db_name, collection_name)
 
-    # Map MongoDB's "_id" field to the appropriate schema field before schema enforcement.
-    # MongoDB documents have "_id", but the schema expects a different field name
-    # (e.g., "mongo_id" for users, "navigator_id" for navigators).
-    schema_field_names = {f.name for f in schema.fields}
-    if "_id" not in schema_field_names:
-        # Find a candidate field that should receive the MongoDB _id value.
-        # Look for fields ending with "_id" that are string-typed.
-        id_field = None
-        for field in schema.fields:
-            field_type_str = str(field.dataType)
-            if field.name.endswith("_id") and (
-                "StringType" in field_type_str or "string" in field_type_str
-            ):
-                id_field = field.name
-                break
+    from poorbricks.settings import settings
 
-        if id_field and rows:
-            mapped_rows = []
-            for doc in rows:
-                mapped_doc = dict(doc)  # shallow copy
-                if "_id" in mapped_doc:
-                    # Convert ObjectId to string
-                    object_id = mapped_doc.pop("_id")
-                    mapped_doc[id_field] = str(object_id)
-                mapped_rows.append(mapped_doc)
-            rows = mapped_rows
+    field_names = [field.name for field in schema.fields]
+    id_field = _resolve_id_field(schema)
+    bounds = _resolve_partition_bounds(
+        mongo_uri, db_name, collection_name, settings.read_partitions
+    )
+    if not bounds:
+        return spark.createDataFrame([], schema)
 
-    rows = _rename_camel_keys(rows, schema_field_names)
-    rows = _sanitize_bson_types(rows)
-    return spark.createDataFrame(rows, schema=schema)
+    read_range = _make_range_reader(
+        mongo_uri, db_name, collection_name, id_field, field_names
+    )
+    rows_rdd = spark.sparkContext.parallelize(bounds, len(bounds)).flatMap(read_range)
+    return spark.createDataFrame(rows_rdd, schema)

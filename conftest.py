@@ -13,6 +13,12 @@ try:
 except AttributeError:
     pass  # tzset is not available on Windows
 
+# The suite runs under pytest-xdist (-n 4): each worker builds its own Spark
+# session. Bound cores and heap so the workers do not collectively
+# oversubscribe the machine (production uses local[*] with a larger heap).
+os.environ.setdefault("SPARK_MASTER", "local[2]")
+os.environ.setdefault("SPARK_DRIVER_MEMORY", "768m")
+
 
 @pytest.fixture(scope="session")
 def spark() -> SparkSession:

@@ -186,7 +186,19 @@ def _render_volumes_and_env() -> str:
             read_only=True,
         )
 
-        _VOLUMES = [_CODE_VOLUME]
+        # Scratch disk for Spark shuffle / sort / spill — lets pipelines
+        # process datasets larger than the pod's RAM.
+        _SCRATCH_VOLUME = k8s.V1Volume(
+            name="spark-tmp",
+            empty_dir=k8s.V1EmptyDirVolumeSource(size_limit="20Gi"),
+        )
+
+        _SCRATCH_MOUNT = k8s.V1VolumeMount(
+            name="spark-tmp",
+            mount_path="/spark-tmp",
+        )
+
+        _VOLUMES = [_CODE_VOLUME, _SCRATCH_VOLUME]
 
         _ENV_FROM = [
             k8s.V1EnvFromSource(
@@ -198,14 +210,15 @@ def _render_volumes_and_env() -> str:
         ]
 
         _WORKER_RESOURCES = k8s.V1ResourceRequirements(
-            requests={"cpu": "500m", "memory": "2Gi"},
-            limits={"cpu": "2", "memory": "4Gi"},
+            requests={"cpu": "500m", "memory": "2Gi", "ephemeral-storage": "2Gi"},
+            limits={"cpu": "2", "memory": "4Gi", "ephemeral-storage": "20Gi"},
         )
 
         _ENV_VARS = [
             k8s.V1EnvVar(name="TABLES_ROOT", value="/workspace/tables"),
             k8s.V1EnvVar(name="PYTHONPATH", value="/workspace:/app"),
             k8s.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
+            k8s.V1EnvVar(name="SPARK_LOCAL_DIR", value="/spark-tmp"),
             k8s.V1EnvVar(
                 name="POSTGRES_USER",
                 value_from=k8s.V1EnvVarSource(
@@ -254,7 +267,7 @@ def _render_build_task() -> str:
                 cmds=["poorbricks"],
                 arguments=arguments,
                 volumes=_VOLUMES,
-                volume_mounts=[_CODE_MOUNT],
+                volume_mounts=[_CODE_MOUNT, _SCRATCH_MOUNT],
                 env_from=_ENV_FROM,
                 env_vars=_ENV_VARS,
                 container_resources=_WORKER_RESOURCES,

@@ -140,13 +140,24 @@ def run_and_persist(
 
     meta = _resolve_meta(pipeline_key)
 
-    # Write to Postgres if applicable
+    from utils.contracts import profile_dataframe, push_contract
+    from validation.expectations import find_expectations_class
+
+    schema = meta.model.to_struct()  # type: ignore[attr-defined]
+    schema_json = schema.jsonValue()
+
+    # Write to Postgres and profile the result, all without collecting the
+    # DataFrame to the driver: the writer streams partition by partition, and
+    # the profile is a single SQL pass over the freshly written table.
     if meta.target_storage == "postgres":
         from utils.postgres import PostgresLoader
 
         loader = PostgresLoader()
-        rows = loader.write(result.df, meta.level, _pg_table_name(meta.table_name))
-        result.rows = rows
+        pg_table = _pg_table_name(meta.table_name)
+        result.rows = loader.write(result.df, meta.level, pg_table)
+        profile = loader.profile_table(meta.level, pg_table, schema)
+    else:
+        profile = profile_dataframe(result.df)
 
     # Get example rows — fixture failures are non-fatal (contract still publishes)
     if mode == "fixtures":
@@ -163,34 +174,6 @@ def run_and_persist(
                 example_rows = []
         except Exception:
             example_rows = []
-
-    # Profile and push contract
-    from utils.contracts import profile_dataframe, push_contract
-    from validation.expectations import find_expectations_class
-
-    try:
-        profile = profile_dataframe(result.df)
-    except Exception:
-        import os
-
-        import psycopg2
-
-        pg_table = _pg_table_name(meta.table_name)
-        conn = psycopg2.connect(
-            host=os.environ["POSTGRES_HOST"],
-            port=int(os.environ.get("POSTGRES_PORT", 5432)),
-            dbname=os.environ["POSTGRES_DB"],
-            user=os.environ["POSTGRES_USER"],
-            password=os.environ["POSTGRES_PASSWORD"],
-        )
-        cur = conn.cursor()
-        cur.execute(f"SELECT COUNT(*) FROM {meta.level}.{pg_table}")
-        row = cur.fetchone()
-        row_count = row[0] if row is not None else 0
-        conn.close()
-        profile = {"row_count": row_count, "null_rates": {}, "enum_samples": {}}
-    schema = meta.model.to_struct()  # type: ignore[attr-defined]
-    schema_json = schema.jsonValue()
 
     push_contract(
         table_name=meta.table_name,
