@@ -56,9 +56,9 @@ jobs:
       - tools/wait-for-ports-ready:
           ports: "27017"
       - run:
-          name: Unit tests (poorbricks + utils + tables + validation)
+          name: Unit tests (poorbricks + utils + tables + validation + api)
           command: >
-            poetry run pytest poorbricks/ utils/ tables/ validation/
+            poetry run pytest poorbricks/ utils/ tables/ validation/ api/
             -n 2 -m "not integration and not slow"
       - run:
           name: Architecture validation

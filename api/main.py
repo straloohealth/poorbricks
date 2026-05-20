@@ -78,6 +78,32 @@ def get_contract_endpoint(table_name: str) -> dict[str, Any]:
         )
 
 
+@app.get("/v1/stats")
+def stats_endpoint() -> dict[str, Any]:
+    """Postgres warehouse stats — per-table row counts and on-disk sizes.
+
+    Read-only snapshot used to verify that pipelines are materialising rows.
+    """
+    from utils.postgres import PostgresInspector
+
+    inspector = PostgresInspector()
+    snapshots = inspector.inspect(sample_size=0)
+    return {
+        "server": inspector.server_info(),
+        "table_count": len(snapshots),
+        "total_rows": sum(s.row_count for s in snapshots),
+        "tables": [
+            {
+                "schema": s.schema,
+                "name": s.name,
+                "row_count": s.row_count,
+                "size_bytes": s.size_bytes,
+            }
+            for s in snapshots
+        ],
+    }
+
+
 @app.post("/v1/upload")
 async def upload(
     prefix: str = Form(...),
