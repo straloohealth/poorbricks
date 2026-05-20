@@ -9,7 +9,7 @@ version: 2.1
 # `private-registry` parameter. Switch back to a production pin
 # (straloohealth/tools@3) once that orb change is released.
 orbs:
-  tools: straloohealth/tools@dev:3.0.29-feat-circleci-orb-conventions+2
+  tools: straloohealth/tools@dev:3.0.29-feat-circleci-orb-conventions+3
 
 # ── Executors ───────────────────────────────────────────────────────────────
 # The orb's python-test executor uses cimg/python and has no MongoDB +
