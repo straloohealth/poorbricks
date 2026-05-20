@@ -65,10 +65,33 @@ class VerificationError:
         return f"✗ {self.pipeline_key} [{self.category}]: {self.message}"
 
 
+_DEFAULT_CONTRACT_URL = (
+    "https://airflow-poorbricks-server-ingress.stingray-ordinal.ts.net"
+)
+
+
 def _default_fetcher() -> ContractFetcher:
     from utils.contracts import fetch_contract
 
     return fetch_contract
+
+
+def _http_fetcher(base_url: str) -> ContractFetcher:
+    """Fetch contracts from the poorbricks server HTTP endpoint.
+
+    Raises KeyError when the server returns 404 (contract not found).
+    """
+    import requests
+
+    def fetch(table_name: str) -> dict[str, Any]:
+        url = f"{base_url.rstrip('/')}/v1/contracts/{table_name}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 404:
+            raise KeyError(table_name)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+    return fetch
 
 
 def _compare_schemas(
@@ -443,10 +466,22 @@ def main(argv: list[str] | None = None) -> None:
         default=100,
         help="(mongo mode) number of oldest + newest docs to sample per collection",
     )
+    parser.add_argument(
+        "--contract-url",
+        default=_DEFAULT_CONTRACT_URL,
+        help=(
+            "(local mode) base URL of the poorbricks server to fetch contracts from. "
+            f"Defaults to the internal Tailscale endpoint. "
+            "Pass empty string to use direct MongoDB access instead."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "local":
-        errors: list[Any] = verify_local(tables_root=args.tables_root)
+        fetcher = _http_fetcher(args.contract_url) if args.contract_url else None
+        errors: list[Any] = verify_local(
+            tables_root=args.tables_root, contract_fetcher=fetcher
+        )
     elif args.mode == "arch":
         errors = check_architecture(tables_root=args.tables_root)
     elif args.mode == "mongo":
@@ -481,4 +516,6 @@ __all__ = [
     "verify_mongo",
     "ArchError",
     "check_architecture",
+    "_DEFAULT_CONTRACT_URL",
+    "_http_fetcher",
 ]

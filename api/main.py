@@ -56,6 +56,25 @@ def status() -> dict[str, bool]:
     return {"busy": _upload_lock.locked()}
 
 
+@app.get("/v1/contracts")
+def list_contracts_endpoint() -> list[dict[str, Any]]:
+    from utils.contracts import list_contracts
+
+    return list_contracts()
+
+
+@app.get("/v1/contracts/{table_name}")
+def get_contract_endpoint(table_name: str) -> dict[str, Any]:
+    from utils.contracts import fetch_contract
+
+    try:
+        return fetch_contract(table_name)
+    except KeyError:
+        raise HTTPException(
+            status_code=404, detail=f"Contract {table_name!r} not found"
+        )
+
+
 @app.post("/v1/upload")
 async def upload(
     prefix: str = Form(...),

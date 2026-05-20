@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_SNAKE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 _REQUIRED_FILES = [
     "__init__.py",
@@ -161,6 +164,9 @@ def _check_pipeline_dir(pipeline_dir: Path, rel: str) -> list[ArchError]:
                     )
                 )
 
+        # 6. snake_case field names on ValidatedStruct subclasses
+        errors.extend(_check_snake_case_fields(config_path, rel))
+
     return errors
 
 
@@ -191,6 +197,34 @@ def _read_pipeline_level(pipeline_dir: Path) -> str | None:
     return None
 
 
+def _check_snake_case_fields(config_path: Path, rel: str) -> list[ArchError]:
+    """Return ArchError for any ValidatedStruct field name that is not snake_case."""
+    errors: list[ArchError] = []
+    tree = ast.parse(config_path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not _inherits_from(node, "ValidatedStruct"):
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, ast.AnnAssign):
+                continue
+            if not isinstance(stmt.target, ast.Name):
+                continue
+            field_name = stmt.target.id
+            if not _SNAKE_RE.match(field_name):
+                errors.append(
+                    ArchError(
+                        pipeline_dir=rel,
+                        message=(
+                            f"{node.name}.{field_name}: field name must be snake_case "
+                            "(lowercase letters, digits, and underscores only)"
+                        ),
+                    )
+                )
+    return errors
+
+
 def _read_class_attr_value(path: Path, base_name: str, attr_name: str) -> Any:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
@@ -215,4 +249,9 @@ def _read_class_attr_value(path: Path, base_name: str, attr_name: str) -> Any:
     return None
 
 
-__all__ = ["ArchError", "check_architecture", "check_pipeline_dir"]
+__all__ = [
+    "ArchError",
+    "check_architecture",
+    "check_pipeline_dir",
+    "_check_snake_case_fields",
+]
