@@ -45,6 +45,50 @@ def test_invalid_prefix_rejected(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_stats_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """/v1/stats aggregates PostgresInspector snapshots into warehouse stats."""
+    from utils import postgres as pg_module
+
+    class _FakeInspector:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def inspect(self, sample_size: int = 10) -> list[pg_module.TableSnapshot]:
+            return [
+                pg_module.TableSnapshot(
+                    schema="silver",
+                    name="dim_patient",
+                    row_count=5_000,
+                    size_bytes=2_048,
+                    columns=[],
+                    sample_rows=[],
+                ),
+                pg_module.TableSnapshot(
+                    schema="bronze",
+                    name="smith_users",
+                    row_count=7_500,
+                    size_bytes=4_096,
+                    columns=[],
+                    sample_rows=[],
+                ),
+            ]
+
+        def server_info(self) -> dict[str, str]:
+            return {"host": "h", "port": "5432", "database": "poorbricks", "user": "u"}
+
+    monkeypatch.setattr(pg_module, "PostgresInspector", _FakeInspector)
+
+    response = client.get("/v1/stats")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["table_count"] == 2
+    assert body["total_rows"] == 12_500
+    assert body["server"]["database"] == "poorbricks"
+    by_name = {t["name"]: t for t in body["tables"]}
+    assert by_name["dim_patient"]["row_count"] == 5_000
+    assert by_name["dim_patient"]["schema"] == "silver"
+
+
 def test_upload_rejects_table_repo_with_missing_contract(client: TestClient) -> None:
     """test_table_repo contains a 'missing_contract' pipeline that
     intentionally references an upstream not in the contracts store —
