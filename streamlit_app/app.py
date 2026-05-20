@@ -9,6 +9,9 @@ Pages:
     transforms against editable fixture rows. Contracts are produced by the
     distributed pipeline test; refresh them with
     `poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0 -v`.
+  - Status: warehouse health — tables missing a contract, empty tables, and
+    the last-sync distribution with a 48h staleness alert.
+  - Lineage: an interactive DAG of table-to-table dependencies.
   - Postgres status: row counts and sizes per table in the configured
     PostgreSQL warehouse.
 """
@@ -27,9 +30,11 @@ from streamlit_app import (  # noqa: E402
     cache,
     contract,
     header,
+    lineage,
     postgres_status,
     runner,
     sidebar,
+    status_dashboard,
     theme,
 )
 
@@ -65,6 +70,14 @@ def contracts_page() -> None:
     header.render_footer(contract_doc)
 
 
+def status_page() -> None:
+    status_dashboard.render()
+
+
+def lineage_page() -> None:
+    lineage.render()
+
+
 def postgres_status_page() -> None:
     postgres_status.render()
 
@@ -76,6 +89,16 @@ nav = st.navigation(
             title="Contracts",
             icon=":material/contract:",
             default=True,
+        ),
+        st.Page(
+            status_page,
+            title="Status",
+            icon=":material/monitoring:",
+        ),
+        st.Page(
+            lineage_page,
+            title="Lineage",
+            icon=":material/account_tree:",
         ),
         st.Page(
             postgres_status_page,

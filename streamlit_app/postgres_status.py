@@ -9,24 +9,8 @@ import pandas as pd
 import streamlit as st
 
 from streamlit_app import cache
-from utils.postgres import ColumnInfo, PostgresInspector, TableSnapshot
-
-SCHEMA_ORDER: list[str] = ["bronze", "silver", "gold"]
-SCHEMA_COLOR: dict[str, str] = {
-    "bronze": "#b45309",
-    "silver": "#94a3b8",
-    "gold": "#eab308",
-}
-
-
-@st.cache_data(ttl=60)
-def _cached_server_info() -> dict[str, str]:
-    return PostgresInspector().server_info()
-
-
-@st.cache_data(ttl=60, show_spinner="Inspecting warehouse…")
-def _cached_snapshots() -> list[TableSnapshot]:
-    return PostgresInspector().inspect(sample_size=10)
+from streamlit_app.theme import LEVEL_COLORS, LEVEL_ORDER
+from utils.postgres import ColumnInfo, TableSnapshot
 
 
 @st.cache_data(ttl=60)
@@ -68,14 +52,12 @@ def render() -> None:
     col_refresh, _ = st.columns([1, 6])
     with col_refresh:
         if st.button("↻ Refresh", use_container_width=True):
-            _cached_server_info.clear()
-            _cached_snapshots.clear()
             _cached_contract_index.clear()
             cache.clear()
             st.rerun()
 
     try:
-        info = _cached_server_info()
+        info = cache.cached_server_info()
     except Exception as exc:
         st.error(f"Could not connect to PostgreSQL.\n\n`{type(exc).__name__}`: {exc}")
         return
@@ -87,7 +69,7 @@ def render() -> None:
     info_cols[3].metric("User", info["user"])
 
     try:
-        snapshots = _cached_snapshots()
+        snapshots = cache.cached_warehouse_snapshots()
     except Exception as exc:
         st.error(f"Could not inspect tables: `{type(exc).__name__}`: {exc}")
         return
@@ -103,8 +85,8 @@ def render() -> None:
     for snap in snapshots:
         by_schema.setdefault(snap.schema, []).append(snap)
 
-    ordered = [s for s in SCHEMA_ORDER if s in by_schema] + sorted(
-        set(by_schema) - set(SCHEMA_ORDER)
+    ordered = [s for s in LEVEL_ORDER if s in by_schema] + sorted(
+        set(by_schema) - set(LEVEL_ORDER)
     )
     for schema in ordered:
         _render_schema(schema, by_schema[schema], contracts)
@@ -137,7 +119,7 @@ def _render_schema(
     tables: list[TableSnapshot],
     contracts: dict[str, dict[str, Any]],
 ) -> None:
-    color = SCHEMA_COLOR.get(schema, "#6b7280")
+    color = LEVEL_COLORS.get(schema, "#6b7280")
     rows = sum(t.row_count for t in tables)
     st.markdown(
         f"<h3 style='border-color:{color}33;'>"
