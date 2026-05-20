@@ -123,11 +123,24 @@ def _compare_schemas(
 
 
 def _check_pipeline_contracts(
-    key: str, meta: PipelineMeta, fetcher: ContractFetcher
+    key: str,
+    meta: PipelineMeta,
+    fetcher: ContractFetcher,
+    local_tables: dict[str, PipelineMeta],
 ) -> list[ContractError]:
+    """Check one pipeline's upstreams.
+
+    When an upstream is produced by another pipeline in the same upload bundle
+    (``local_tables``), it is resolved against that local producer's declared
+    output schema — never the published contract. The upload refreshes that
+    contract atomically, so a stale or absent published copy is irrelevant and
+    must not block a repo that publishes a source table alongside its consumer.
+    """
     errors: list[ContractError] = []
     for input_name, spec in meta.inputs_cls.sources().items():
         if isinstance(spec, ContractSource):
+            if spec.table_name in local_tables:
+                continue
             try:
                 fetcher(spec.table_name)
             except KeyError:
@@ -140,19 +153,23 @@ def _check_pipeline_contracts(
                     )
                 )
         elif isinstance(spec, TableSource):
-            try:
-                contract = fetcher(spec.table_name)
-            except KeyError:
-                errors.append(
-                    ContractError(
-                        pipeline_key=key,
-                        input_name=input_name,
-                        upstream=spec.table_name,
-                        reason="missing_contract",
+            producer = local_tables.get(spec.table_name)
+            if producer is not None:
+                published_schema_json = producer.model.to_struct().jsonValue()  # type: ignore[attr-defined]
+            else:
+                try:
+                    published_schema_json = fetcher(spec.table_name)["schema_json"]
+                except KeyError:
+                    errors.append(
+                        ContractError(
+                            pipeline_key=key,
+                            input_name=input_name,
+                            upstream=spec.table_name,
+                            reason="missing_contract",
+                        )
                     )
-                )
-                continue
-            diffs = _compare_schemas(spec.model.to_struct(), contract["schema_json"])
+                    continue
+            diffs = _compare_schemas(spec.model.to_struct(), published_schema_json)
             if diffs:
                 errors.append(
                     ContractError(
@@ -313,13 +330,19 @@ def verify_local(
 
     For each registered pipeline, inspects ``ContractSource`` / ``TableSource``
     annotations and asserts that the published contract exists and is
-    schema-compatible.
+    schema-compatible. An upstream produced by another pipeline in the same
+    bundle is validated against that local producer instead of the published
+    contract — the upload refreshes that contract atomically.
     """
     discover_all_pipelines(tables_root)
     fetcher = contract_fetcher or _default_fetcher()
+    pipelines = all_pipelines()
+    local_tables: dict[str, PipelineMeta] = {
+        meta.table_name: meta for meta in pipelines.values()
+    }
     errors: list[ContractError] = []
-    for key, meta in all_pipelines().items():
-        errors.extend(_check_pipeline_contracts(key, meta, fetcher))
+    for key, meta in pipelines.items():
+        errors.extend(_check_pipeline_contracts(key, meta, fetcher, local_tables))
     return errors
 
 
