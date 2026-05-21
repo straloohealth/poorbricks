@@ -586,22 +586,17 @@ def _verify_db_pipeline(
             VerificationError(pipeline_key=key, category="run_error", message=str(exc))
         ]
 
-    errors = [
+    # db mode verifies that the pipeline runs and its output matches the
+    # contract — schema shape + ``ValidationRule``s, both checked by
+    # ``_execute_pipeline`` via ``model.verify`` and surfaced in
+    # ``result.errors``. ``Expectations`` (MIN_ROWS / ENUM_VALUES /
+    # FRESH_COLUMN / UNIQUE_KEYS / NULL_RATE_MAX) are deliberately NOT run:
+    # they are production-health monitors and would report false failures
+    # against synthetic rows derived from a dev collection's seed data.
+    return [
         VerificationError(pipeline_key=key, category="rule", message=msg)
         for msg in result.errors
     ]
-    if result.df is not None:
-        expectations_cls = _find_expectations_for(meta)
-        if expectations_cls is not None:
-            for violation in expectations_cls.check(  # type: ignore[attr-defined]
-                result.df, enforce_min_rows=False
-            ):
-                errors.append(
-                    VerificationError(
-                        pipeline_key=key, category="expectation", message=violation
-                    )
-                )
-    return errors
 
 
 def verify_db(
@@ -615,12 +610,20 @@ def verify_db(
     For each pipeline with ``MongoSource`` inputs, fetch a synthetic contract
     (inferred schema + generated example rows) from the poorbricks server, feed
     the rows through the production MongoDB document-prep path, run the
-    pipeline, and check rules + expectations. Pipelines with no ``MongoSource``
-    input are skipped.
+    pipeline, and verify its output against the contract — schema shape and
+    ``ValidationRule``\\ s (via ``model.verify``). Pipelines with no
+    ``MongoSource`` input are skipped.
+
+    ``Expectations`` (``MIN_ROWS``, ``ENUM_VALUES``, ``FRESH_COLUMN``,
+    ``UNIQUE_KEYS``, ``NULL_RATE_MAX``) are deliberately NOT enforced here:
+    they are production-health monitors that assert properties of live
+    production data. db mode feeds the pipeline synthetic rows derived from a
+    *dev* collection, so those checks would report false failures on seed
+    data. Production health is monitored at runtime, not gated in CI.
 
     Hard-fails (a ``VerificationError``) on an empty collection, an unreachable
-    server, or any rule / expectation violation. ``fetcher`` is injectable for
-    tests; by default it calls the poorbricks server at ``contract_url``.
+    server, or any rule violation. ``fetcher`` is injectable for tests; by
+    default it calls the poorbricks server at ``contract_url``.
     """
     from poorbricks.runner import _ensure_local_spark
 
