@@ -33,7 +33,7 @@ jobs:
 
   lint-and-type-check:
     docker: *single_image
-    resource_class: medium
+    resource_class: xlarge
     steps:
       - checkout
       - *install_deps
@@ -49,7 +49,7 @@ jobs:
 
   tests:
     docker: *docker_images
-    resource_class: medium
+    resource_class: xlarge
     steps:
       - checkout
       - *install_deps
@@ -68,7 +68,7 @@ jobs:
 
   multi-repo-tests:
     docker: *docker_images
-    resource_class: medium
+    resource_class: xlarge
     steps:
       - checkout
       - *install_deps
@@ -86,7 +86,7 @@ jobs:
 
   build-and-smoke:
     docker: *docker_images
-    resource_class: medium
+    resource_class: xlarge
     steps:
       - checkout
       - *install_deps
@@ -106,7 +106,7 @@ jobs:
 
   integration-tests:
     docker: *docker_images
-    resource_class: large
+    resource_class: xlarge
     steps:
       - checkout
       - *install_deps
@@ -123,7 +123,7 @@ jobs:
 
   workflow-compilation-tests:
     docker: *single_image
-    resource_class: medium
+    resource_class: xlarge
     steps:
       - checkout
       - *install_deps
