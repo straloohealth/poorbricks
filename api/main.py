@@ -63,6 +63,7 @@ def _set_phase(phase: str, **extra: Any) -> None:
     _upload_status.update(extra)
     print(f"[upload] phase: {phase}", flush=True)
 
+
 # In-memory cache for GET /v1/db-contract. Inferring a contract is expensive
 # (sample 1000 docs + infer schema + synthesize rows), so each
 # (db, collection, sample_size) result is cached for 24h. Process-local is
