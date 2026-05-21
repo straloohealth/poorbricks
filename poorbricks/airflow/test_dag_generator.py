@@ -66,6 +66,15 @@ def test_generated_dag_references_keys() -> None:
     assert '"4Gi"' in source
 
 
+def test_worker_env_uses_internal_contracts_url() -> None:
+    """Worker pods have no Tailscale, so ContractSource must hit the
+    in-cluster Service rather than the default *.ts.net endpoint."""
+    wf = _wf((TaskConfig(id="patients", pipeline="postgres:patients"),))
+    source = generate_dag_file(wf, prefix="deadpool", image="img:abc")
+    assert "CONTRACTS_API_URL" in source
+    assert "http://poorbricks-server.airflow.svc.cluster.local:8080" in source
+
+
 def test_check_command_renders_check_arguments() -> None:
     wf = _wf(
         (

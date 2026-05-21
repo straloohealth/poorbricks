@@ -240,6 +240,12 @@ def _render_volumes_and_env() -> str:
             k8s.V1EnvVar(name="POSTGRES_HOST", value="postgresql-rw.storage.svc.cluster.local"),
             k8s.V1EnvVar(name="POSTGRES_PORT", value="5432"),
             k8s.V1EnvVar(name="POSTGRES_DB", value="poorbricks"),
+            # In-cluster workers have no Tailscale; ContractSource must reach
+            # the poorbricks server over the cluster Service, not *.ts.net.
+            k8s.V1EnvVar(
+                name="CONTRACTS_API_URL",
+                value="http://poorbricks-server.airflow.svc.cluster.local:8080",
+            ),
         ]
         """
     )

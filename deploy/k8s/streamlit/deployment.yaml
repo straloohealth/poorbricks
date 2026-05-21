@@ -53,6 +53,11 @@ spec:
               value: poorbricks
             - name: CONTRACTS_COLLECTION
               value: data_contracts
+            # In-cluster pods have no Tailscale, so MagicDNS cannot resolve
+            # the default *.ts.net contracts endpoint. Reach the poorbricks
+            # server over the cluster Service instead.
+            - name: CONTRACTS_API_URL
+              value: http://poorbricks-server.airflow.svc.cluster.local:8080
             - name: POSTGRES_HOST
               value: postgresql-rw.storage.svc.cluster.local
             - name: POSTGRES_PORT
