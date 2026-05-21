@@ -540,16 +540,15 @@ def _verify_db_pipeline(
         try:
             contract = fetcher(spec.db, spec.collection, sample_size)
         except KeyError:
-            return [
-                VerificationError(
-                    pipeline_key=key,
-                    category="run_error",
-                    message=(
-                        f"{input_name}: {spec.db}.{spec.collection} is empty — "
-                        "no DB-derived contract could be built"
-                    ),
-                )
-            ]
+            # An empty collection yields no DB-derived contract. db mode cannot
+            # exercise a pipeline with no upstream data, so skip it with a
+            # warning — same as verify_mongo. An empty dev collection is not a
+            # pipeline defect and must not fail the build.
+            print(
+                f"  ⚠  {key}: {spec.db}.{spec.collection} is empty — "
+                "skipping (no DB-derived contract)"
+            )
+            return []
         except Exception as exc:
             return [
                 VerificationError(
@@ -621,9 +620,10 @@ def verify_db(
     *dev* collection, so those checks would report false failures on seed
     data. Production health is monitored at runtime, not gated in CI.
 
-    Hard-fails (a ``VerificationError``) on an empty collection, an unreachable
-    server, or any rule violation. ``fetcher`` is injectable for tests; by
-    default it calls the poorbricks server at ``contract_url``.
+    A pipeline whose collection is empty is skipped with a warning (db mode
+    has no data to exercise it). Hard-fails (a ``VerificationError``) on an
+    unreachable server or any rule violation. ``fetcher`` is injectable for
+    tests; by default it calls the poorbricks server at ``contract_url``.
     """
     from poorbricks.runner import _ensure_local_spark
 

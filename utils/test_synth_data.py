@@ -60,3 +60,12 @@ def test_nested_struct_and_array_are_generated() -> None:
     for row in generate(result.struct, result.profile, n=5):
         assert isinstance(row["meta"], dict) and "k" in row["meta"]
         assert isinstance(row["tags"], list)
+
+
+def test_enum_field_only_emits_observed_categories() -> None:
+    # An enum field's synthetic values must all come from the real value set,
+    # so a pipeline's enum ValidationRules are never tripped by verify --mode db.
+    allowed = ["MACHINE", "NAVIGATOR", "PATIENT"]
+    result = infer([{"speaker": s} for s in allowed * 20])
+    rows = generate(result.struct, result.profile, n=60)
+    assert {row["speaker"] for row in rows} <= set(allowed)
