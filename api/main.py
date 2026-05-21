@@ -81,10 +81,10 @@ def list_contracts_endpoint() -> list[dict[str, Any]]:
 
 @app.get("/v1/contracts/{table_name}")
 def get_contract_endpoint(table_name: str) -> dict[str, Any]:
-    from utils.contracts import fetch_contract
+    from utils.contracts import fetch_contract_from_mongo
 
     try:
-        return fetch_contract(table_name)
+        return fetch_contract_from_mongo(table_name)
     except KeyError:
         raise HTTPException(
             status_code=404, detail=f"Contract {table_name!r} not found"
@@ -222,9 +222,14 @@ def _handle_upload(
         # Spark fixture tests run in the consumer repo's CI (tables-test job)
         # before upload, so we skip the expensive verify_ci here.
         from poorbricks.verify import verify_local
+        from utils.contracts import fetch_contract_from_mongo
 
         begin("verify_local")
-        contract_errors = verify_local(tables_root=tables_dir)
+        # The server owns Mongo access, so it verifies uploads against the
+        # store directly instead of round-tripping through its own HTTP API.
+        contract_errors = verify_local(
+            tables_root=tables_dir, contract_fetcher=fetch_contract_from_mongo
+        )
         if contract_errors:
             return _fail(
                 "verify_local failed",
