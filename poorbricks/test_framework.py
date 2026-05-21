@@ -7,7 +7,7 @@ No real pipeline migration required — this is the framework's own contract.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
 from pyspark.sql import DataFrame, SparkSession
@@ -316,3 +316,82 @@ class TestRunner:
             meta.module = original_module
             del sys.modules[alias]
             scen_reg.pop("fw_skip_checks", None)
+
+
+class TestTableSourceProductionResolution:
+    """In production a TableSource reads its upstream from the Postgres warehouse.
+
+    The legacy ``spark.read.table()`` catalog read only works in fixtures mode;
+    in production an in-bundle TableSource resolves against its registered
+    producer (schema from the local model, ``level`` from the registry), and a
+    TableSource with no in-bundle producer falls back to the published contract.
+    """
+
+    def test_in_bundle_producer_reads_postgres_with_producer_level(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from . import runner
+
+        captured: dict[str, Any] = {}
+
+        def fake_read_postgres_table(
+            spark: Any, level: str, table_name: str, schema_json: Any
+        ) -> str:
+            captured.update(level=level, table_name=table_name, schema_json=schema_json)
+            return "PG_DF"
+
+        class _FakeMeta:
+            level = "bronze"
+            target_storage = "postgres"
+
+        monkeypatch.setattr(runner, "_read_postgres_table", fake_read_postgres_table)
+        monkeypatch.setattr(runner, "_find_local_producer", lambda _name: _FakeMeta())
+
+        spec = TableSource("_fw_test_patients", _Patient)
+        result = runner._resolve_production_input(
+            spark=None, spec=spec, mongo_uri=None, cache={}
+        )
+
+        assert result == "PG_DF"
+        assert captured["level"] == "bronze"
+        assert captured["table_name"] == "_fw_test_patients"
+        assert captured["schema_json"] == _Patient.to_struct().jsonValue()
+
+    def test_cross_repo_falls_back_to_published_contract(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from . import runner
+
+        calls: list[str] = []
+
+        def fake_read_contract_source(spark: Any, table_name: str) -> str:
+            calls.append(table_name)
+            return "CONTRACT_DF"
+
+        monkeypatch.setattr(runner, "_find_local_producer", lambda _name: None)
+        monkeypatch.setattr(runner, "_read_contract_source", fake_read_contract_source)
+
+        spec = TableSource("_fw_test_patients", _Patient)
+        result = runner._resolve_production_input(
+            spark=None, spec=spec, mongo_uri=None, cache={}
+        )
+
+        assert result == "CONTRACT_DF"
+        assert calls == ["_fw_test_patients"]
+
+    def test_non_postgres_producer_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from . import runner
+
+        class _DeltaMeta:
+            level = "bronze"
+            target_storage = "delta"
+
+        monkeypatch.setattr(runner, "_find_local_producer", lambda _name: _DeltaMeta())
+
+        spec = TableSource("_fw_test_patients", _Patient)
+        with pytest.raises(ValueError, match="only 'postgres'"):
+            runner._resolve_production_input(
+                spark=None, spec=spec, mongo_uri=None, cache={}
+            )

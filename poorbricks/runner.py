@@ -154,19 +154,32 @@ def _resolve_production_input(
 ) -> DataFrame:
     cache = cache or {}
     if isinstance(spec, TableSource):
-        df = spark.read.table(spec.table_name)
-        try:
-            model_field_names = {f.name for f in spec.model.to_struct().fields}
-        except Exception:
-            model_field_names = set()
-        for col in df.columns:
-            if (
-                col.startswith("_")
-                and not col.startswith("__")
-                and col[1:] in model_field_names
-            ):
-                df = df.withColumnRenamed(col, col[1:])
-        return df
+        # A TableSource names an upstream produced by another pipeline in the
+        # same repo/bundle. In production it resolves exactly like a
+        # ContractSource — the materialized rows are read from the Postgres
+        # warehouse — except the schema comes from the locally declared model
+        # and the warehouse schema ("level") from the registered producer, so
+        # a not-yet-published contract never blocks the read.
+        if spec.table_name not in cache:
+            producer = _find_local_producer(spec.table_name)
+            if producer is not None:
+                if producer.target_storage != "postgres":
+                    raise ValueError(
+                        f"TableSource {spec.table_name!r} resolves to a local "
+                        f"producer with storage={producer.target_storage!r}; "
+                        f"only 'postgres' upstreams can be read in production."
+                    )
+                cache[spec.table_name] = _read_postgres_table(
+                    spark,
+                    producer.level,
+                    spec.table_name,
+                    spec.model.to_struct().jsonValue(),
+                )
+            else:
+                # Not produced in this bundle — resolve via the published
+                # contract, exactly as a ContractSource would.
+                cache[spec.table_name] = _read_contract_source(spark, spec.table_name)
+        return cache[spec.table_name]
     if isinstance(spec, MongoSource):
         if mongo_uri is None:
             raise ValueError(
@@ -186,12 +199,17 @@ def _resolve_production_input(
     )
 
 
-def _find_pipeline_by_table(table_name: str) -> PipelineMeta:
-    """Find a pipeline by its table_name (e.g. 'smith.users')."""
+def _find_local_producer(table_name: str) -> PipelineMeta | None:
+    """Return the registered pipeline that produces ``table_name``, or None.
+
+    Resolves a ``TableSource`` against a producer in the same upload bundle
+    without consulting the published contracts store. Returns None when no
+    in-bundle producer is registered, so the caller falls back to the contract.
+    """
     for meta in all_pipelines().values():
         if meta.table_name == table_name:
             return meta
-    raise ValueError(f"No pipeline found for table {table_name!r}.")
+    return None
 
 
 def _read_contract_source(spark: SparkSession, table_name: str) -> DataFrame:
@@ -215,12 +233,33 @@ def _read_contract_source(spark: SparkSession, table_name: str) -> DataFrame:
             f"Run the upstream pipeline first."
         )
     storage = contract.get("storage")
-    level = str(contract.get("level"))
     if storage != "postgres":
         raise NotImplementedError(
             f"ContractSource {table_name!r} has storage={storage!r}; only "
             f"'postgres' is supported as a cross-repo read source."
         )
+    return _read_postgres_table(
+        spark,
+        str(contract.get("level")),
+        table_name,
+        contract.get("schema_json"),
+    )
+
+
+def _read_postgres_table(
+    spark: SparkSession,
+    level: str,
+    table_name: str,
+    schema_json: dict[str, Any] | None,
+) -> DataFrame:
+    """Read a materialized warehouse table from Postgres over partitioned JDBC.
+
+    Shared by ``ContractSource`` and in-bundle ``TableSource`` production
+    resolution: ``level`` is the Postgres schema the producer wrote to and
+    ``schema_json`` (when available) lets the read fan out across executors.
+    """
+    from .settings import settings
+
     pg_table = table_name.replace(".", "_")
     jdbc_url = (
         f"jdbc:postgresql://{settings.postgres_host}:{settings.postgres_port}"
@@ -240,7 +279,7 @@ def _read_contract_source(spark: SparkSession, table_name: str) -> DataFrame:
     # Partition the read across executors when the schema has a column we can
     # range-partition on — N parallel range scans instead of one serial read.
     for key, value in _jdbc_partition_options(
-        contract.get("schema_json"), level, pg_table, settings.read_partitions
+        schema_json, level, pg_table, settings.read_partitions
     ).items():
         reader = reader.option(key, value)
     return reader.load()
@@ -503,6 +542,11 @@ def run(
             raise ValueError("mode=scenario requires scenario_name.")
         inputs = _build_fixtures_inputs(scenario_key, inputs_cls, scenario_name)
     elif mode == "production":
+        # Register every pipeline in the bundle so an in-bundle TableSource
+        # upstream resolves against its producer's level (idempotent).
+        from .discovery import discover_all_pipelines
+
+        discover_all_pipelines()
         inputs = _build_production_inputs(
             spark, inputs_cls, mongo_uri=mongo_uri, cache=cache
         )

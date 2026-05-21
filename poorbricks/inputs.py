@@ -81,7 +81,9 @@ class Inputs:
     ``MyInputs.from_rows({...})`` to build a concrete instance.
     """
 
-    _sources_cache: ClassVar[dict[str, SourceSpec] | None] = None
+    # Holds the resolved sources plus a "__cls__" marker entry, so the value
+    # type is Any rather than SourceSpec.
+    _sources_cache: ClassVar[dict[str, Any] | None] = None
 
     @classmethod
     def sources(cls) -> dict[str, SourceSpec]:
@@ -89,7 +91,7 @@ class Inputs:
 
         Cached per-subclass after first call.
         """
-        if cls._sources_cache is not None and cls._sources_cache.get("__cls__") is cls:  # type: ignore[comparison-overlap]
+        if cls._sources_cache is not None and cls._sources_cache.get("__cls__") is cls:
             cache = dict(cls._sources_cache)
             cache.pop("__cls__", None)
             return cache
@@ -108,7 +110,7 @@ class Inputs:
 
         # Stash with a class marker so a subclass doesn't accidentally read the
         # parent's cache.
-        cls._sources_cache = {"__cls__": cls, **result}  # type: ignore[dict-item]
+        cls._sources_cache = {"__cls__": cls, **result}
         return result
 
     @classmethod
