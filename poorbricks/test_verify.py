@@ -15,7 +15,7 @@ from pyspark.sql import DataFrame, SparkSession
 from poorbricks import Inputs
 from poorbricks.inputs import ContractSource, MongoSource, TableSource
 from poorbricks.verify import _check_pipeline_contracts, _verify_db_pipeline
-from validation import NotNullRule, ValidatedStruct, ValidationRule
+from validation import Expectations, NotNullRule, ValidatedStruct, ValidationRule
 
 
 class _UserModel(ValidatedStruct):
@@ -187,6 +187,40 @@ def test_verify_db_passes_when_collection_matches_contract(
 ) -> None:
     """Real data carries ``requiredNote`` (camelCase) — the production
     document-prep path renames it to ``required_note`` and verify passes."""
+    real_docs = [
+        {"_id": f"{i:024x}", "name": f"w{i}", "requiredNote": "ok note"}
+        for i in range(15)
+    ]
+    errors = _verify_db_pipeline(
+        "postgres:widget",
+        _widget_meta(),
+        {"upstream": _WidgetInputs.sources()["upstream"]},
+        _stub_fetcher(real_docs),
+        sample_size=15,
+        spark=spark,
+    )
+    assert errors == []
+
+
+@pytest.mark.spark
+def test_verify_db_does_not_enforce_production_expectations(
+    spark: SparkSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """db mode feeds the pipeline synthetic rows derived from a *dev*
+    collection. ``Expectations`` (MIN_ROWS / ENUM_VALUES / FRESH_COLUMN / …)
+    are production-health monitors and must not gate verify --mode db — they
+    would report false failures on seed data. Only schema + ``ValidationRule``s
+    (model.verify) decide. Regression guard: if the Expectations check is ever
+    re-added to ``_verify_db_pipeline``, ``check`` runs and the test fails."""
+
+    class _NeverRunHere(Expectations):
+        @classmethod
+        def check(cls, df: DataFrame, *, enforce_min_rows: bool = True) -> list[str]:
+            raise AssertionError("Expectations.check must not run in verify --mode db")
+
+    monkeypatch.setattr(
+        "poorbricks.verify._find_expectations_for", lambda _meta: _NeverRunHere
+    )
     real_docs = [
         {"_id": f"{i:024x}", "name": f"w{i}", "requiredNote": "ok note"}
         for i in range(15)
