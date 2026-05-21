@@ -47,6 +47,19 @@ app = FastAPI(title="poorbricks-server", version="0.1.0")
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SHA_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
 _upload_lock = threading.Lock()
+_upload_status: dict[str, Any] = {
+    "phase": "idle",
+    "prefix": None,
+    "sha": None,
+    "started_at": None,
+}
+
+
+def _set_phase(phase: str, **extra: Any) -> None:
+    """Record the current upload phase so GET /v1/status reports live progress."""
+    _upload_status["phase"] = phase
+    _upload_status.update(extra)
+    print(f"[upload] phase: {phase}", flush=True)
 
 
 @app.get("/health")
@@ -55,8 +68,8 @@ def health() -> dict[str, str]:
 
 
 @app.get("/v1/status")
-def status() -> dict[str, bool]:
-    return {"busy": _upload_lock.locked()}
+def status() -> dict[str, Any]:
+    return {"busy": _upload_lock.locked(), **_upload_status}
 
 
 @app.get("/v1/contracts")
@@ -78,6 +91,32 @@ def get_contract_endpoint(table_name: str) -> dict[str, Any]:
         )
 
 
+@app.get("/v1/stats")
+def stats_endpoint() -> dict[str, Any]:
+    """Postgres warehouse stats — per-table row counts and on-disk sizes.
+
+    Read-only snapshot used to verify that pipelines are materialising rows.
+    """
+    from utils.postgres import PostgresInspector
+
+    inspector = PostgresInspector()
+    snapshots = inspector.inspect(sample_size=0)
+    return {
+        "server": inspector.server_info(),
+        "table_count": len(snapshots),
+        "total_rows": sum(s.row_count for s in snapshots),
+        "tables": [
+            {
+                "schema": s.schema,
+                "name": s.name,
+                "row_count": s.row_count,
+                "size_bytes": s.size_bytes,
+            }
+            for s in snapshots
+        ],
+    }
+
+
 @app.post("/v1/upload")
 async def upload(
     prefix: str = Form(...),
@@ -94,7 +133,20 @@ async def upload(
     try:
         payload = await code.read()
         result = await run_in_threadpool(_handle_upload, prefix, sha, payload, settings)
+    except Exception as exc:  # never return an empty-body 500
+        import traceback
+
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": f"internal error during upload: {exc}",
+                "phase": _upload_status.get("phase"),
+                "traceback": traceback.format_exc().splitlines()[-12:],
+            },
+            status_code=500,
+        )
     finally:
+        _set_phase("idle")
         _upload_lock.release()
     status_code = 200 if result.get("ok") else 422
     return JSONResponse(result, status_code=status_code)
@@ -119,18 +171,52 @@ def _validate_sha(sha: str) -> None:
 def _handle_upload(
     prefix: str, sha: str, payload: bytes, cfg: ApiSettings
 ) -> dict[str, Any]:
-    """Synchronous upload pipeline (runs in a worker thread)."""
+    """Synchronous upload pipeline (runs in a worker thread).
+
+    Each phase is recorded into the shared upload status (surfaced live by
+    GET /v1/status) and into a ``phases`` trail returned in the response, so a
+    slow or failed upload always shows how far it got and where it broke.
+    """
+    import time
+
+    phases: list[dict[str, Any]] = []
+
+    def begin(name: str) -> None:
+        now = time.monotonic()
+        if phases:
+            phases[-1]["seconds"] = round(now - phases[-1]["start"], 2)
+        phases.append({"name": name, "start": now})
+        _set_phase(name, prefix=prefix, sha=sha)
+
+    def trail() -> list[dict[str, Any]]:
+        if phases:
+            phases[-1].setdefault(
+                "seconds", round(time.monotonic() - phases[-1]["start"], 2)
+            )
+        return [{"name": p["name"], "seconds": p.get("seconds", 0.0)} for p in phases]
+
+    _set_phase(
+        "starting",
+        prefix=prefix,
+        sha=sha,
+        started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
     _reset_pipeline_module_cache()
     with tempfile.TemporaryDirectory(prefix=f"poorbricks-{prefix}-") as tmp:
         root = Path(tmp)
+        begin("extracting")
         _extract_safely(payload, root)
         tables_dir = root / "tables"
         workflows_dir = root / "workflows"
 
         if not tables_dir.is_dir():
-            return _fail("missing 'tables/' directory in uploaded tarball")
+            return _fail(
+                "missing 'tables/' directory in uploaded tarball", phases=trail()
+            )
         if not workflows_dir.is_dir():
-            return _fail("missing 'workflows/' directory in uploaded tarball")
+            return _fail(
+                "missing 'workflows/' directory in uploaded tarball", phases=trail()
+            )
 
         # Local verify — contract schemas only, no Spark.
         # Spark fixture tests run in the consumer repo's CI (tables-test job)
@@ -138,6 +224,7 @@ def _handle_upload(
         from poorbricks.verify import verify_local
         from utils.contracts import fetch_contract_from_mongo
 
+        begin("verify_local")
         # The server owns Mongo access, so it verifies uploads against the
         # store directly instead of round-tripping through its own HTTP API.
         contract_errors = verify_local(
@@ -147,16 +234,18 @@ def _handle_upload(
             return _fail(
                 "verify_local failed",
                 errors=[e.format() for e in contract_errors],
+                phases=trail(),
             )
 
-        # Parse workflows + generate DAGs.
+        begin("parsing_workflows")
         try:
             workflows = load_workflows(workflows_dir)
         except WorkflowParseError as exc:
-            return _fail(f"workflow parse error: {exc}")
+            return _fail(f"workflow parse error: {exc}", phases=trail())
         except (FileNotFoundError, NotADirectoryError) as exc:
-            return _fail(str(exc))
+            return _fail(str(exc), phases=trail())
 
+        begin("generating_dags")
         dag_store = _build_store(cfg)
         _publish_code_to_pvc(
             tables_dir=tables_dir,
@@ -187,6 +276,7 @@ def _handle_upload(
             "dag_names": sorted(dag_names),
             "pruned": pruned,
             "workflows": [_serialize(wf) for wf in workflows],
+            "phases": trail(),
         }
 
 
@@ -262,8 +352,16 @@ def _serialize(obj: Any) -> Any:
     return obj
 
 
-def _fail(message: str, *, errors: list[str] | None = None) -> dict[str, Any]:
-    return {"ok": False, "message": message, "errors": errors or []}
+def _fail(
+    message: str,
+    *,
+    errors: list[str] | None = None,
+    phases: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {"ok": False, "message": message, "errors": errors or []}
+    if phases is not None:
+        out["phases"] = phases
+    return out
 
 
 def _reset_pipeline_module_cache() -> None:
