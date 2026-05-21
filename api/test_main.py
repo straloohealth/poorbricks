@@ -104,3 +104,139 @@ def test_upload_rejects_table_repo_with_missing_contract(client: TestClient) -> 
     assert response.status_code == 422
     assert body["ok"] is False
     assert any("missing_contract" in e or "ContractError" in e for e in body["errors"])
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/db-contract — DB-derived synthetic contracts
+# ---------------------------------------------------------------------------
+
+# Mock documents standing in for a live MongoDB collection. camelCase keys,
+# 24-hex ObjectId-style _id, and large HTML content — the shape the real
+# watson.notes collection has.
+_MOCK_DOCS = [
+    {
+        "_id": f"{i:024x}",
+        "authorId": f"navigator-{i}",
+        "content": "<p>" + "clinical observation " * 30 + "</p>",
+        "count": i,
+    }
+    for i in range(30)
+]
+
+
+class _FakeClock:
+    """Mutable stand-in for the ``time`` module used by api.main."""
+
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def _clear_db_cache() -> object:
+    from api import main as api_main
+
+    api_main._db_contract_cache.clear()
+    yield None
+    api_main._db_contract_cache.clear()
+
+
+def test_db_contract_returns_inferred_synthetic_contract(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, _clear_db_cache: object
+) -> None:
+    monkeypatch.setattr(
+        "utils.mongo_sample.sample_random_docs",
+        lambda uri, db, coll, n: list(_MOCK_DOCS),
+    )
+    response = client.get(
+        "/v1/db-contract", params={"db": "watson", "collection": "notes"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sampled_count"] == len(_MOCK_DOCS)
+    assert body["cache"] == "miss"
+    # Native camelCase field names are preserved — never normalized.
+    field_names = {f["name"] for f in body["schema_json"]["fields"]}
+    assert {"_id", "authorId", "content", "count"} <= field_names
+    assert len(body["example_rows"]) == 25
+    # Example rows are synthetic, not real: HTML content is generated, and no
+    # row repeats the verbatim mock content.
+    real_content = _MOCK_DOCS[0]["content"]
+    assert all("<" in row["content"] for row in body["example_rows"])
+    assert all(row["content"] != real_content for row in body["example_rows"])
+
+
+def test_db_contract_empty_collection_returns_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, _clear_db_cache: object
+) -> None:
+    from utils.mongo_sample import EmptyCollectionError
+
+    def _raise(*_a: object, **_k: object) -> list[dict]:
+        raise EmptyCollectionError("watson.notes is empty")
+
+    monkeypatch.setattr("utils.mongo_sample.sample_random_docs", _raise)
+    response = client.get(
+        "/v1/db-contract", params={"db": "watson", "collection": "notes"}
+    )
+    assert response.status_code == 404
+
+
+def test_db_contract_unreachable_returns_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, _clear_db_cache: object
+) -> None:
+    def _raise(*_a: object, **_k: object) -> list[dict]:
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("utils.mongo_sample.sample_random_docs", _raise)
+    response = client.get(
+        "/v1/db-contract", params={"db": "watson", "collection": "notes"}
+    )
+    assert response.status_code == 503
+
+
+def test_db_contract_invalid_name_returns_400(client: TestClient) -> None:
+    response = client.get(
+        "/v1/db-contract", params={"db": "bad name!", "collection": "notes"}
+    )
+    assert response.status_code == 400
+
+
+def test_db_contract_cache_hit_skips_resampling(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, _clear_db_cache: object
+) -> None:
+    calls: list[int] = []
+
+    def _sampler(uri: str, db: str, coll: str, n: int) -> list[dict]:
+        calls.append(1)
+        return list(_MOCK_DOCS)
+
+    monkeypatch.setattr("utils.mongo_sample.sample_random_docs", _sampler)
+    params = {"db": "watson", "collection": "notes"}
+    first = client.get("/v1/db-contract", params=params).json()
+    second = client.get("/v1/db-contract", params=params).json()
+    assert first["cache"] == "miss"
+    assert second["cache"] == "hit"
+    assert len(calls) == 1  # sampled once; second call served from cache
+
+
+def test_db_contract_cache_expires_after_ttl(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, _clear_db_cache: object
+) -> None:
+    from api import main as api_main
+
+    calls: list[int] = []
+
+    def _sampler(uri: str, db: str, coll: str, n: int) -> list[dict]:
+        calls.append(1)
+        return list(_MOCK_DOCS)
+
+    monkeypatch.setattr("utils.mongo_sample.sample_random_docs", _sampler)
+    clock = _FakeClock(1_000_000.0)
+    monkeypatch.setattr(api_main, "time", clock)
+    params = {"db": "watson", "collection": "notes"}
+    client.get("/v1/db-contract", params=params)
+    clock.now += 25 * 60 * 60  # advance past the 24h TTL
+    client.get("/v1/db-contract", params=params)
+    assert len(calls) == 2  # re-sampled after the entry expired

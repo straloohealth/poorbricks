@@ -1,16 +1,21 @@
-"""Unit tests for ``_check_pipeline_contracts`` in-bundle source resolution."""
+"""Unit tests for ``_check_pipeline_contracts`` in-bundle source resolution,
+plus ``verify_db`` — running a MongoSource pipeline against a DB-derived
+synthetic contract.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Annotated, Any
 
-from pyspark.sql import DataFrame
+import pytest
+from pyspark.sql import DataFrame, SparkSession
 
 from poorbricks import Inputs
-from poorbricks.inputs import ContractSource, TableSource
-from poorbricks.verify import _check_pipeline_contracts
-from validation import ValidatedStruct
+from poorbricks.inputs import ContractSource, MongoSource, TableSource
+from poorbricks.verify import _check_pipeline_contracts, _verify_db_pipeline
+from validation import NotNullRule, ValidatedStruct, ValidationRule
 
 
 class _UserModel(ValidatedStruct):
@@ -100,3 +105,98 @@ def test_cross_repo_missing_contract_fails() -> None:
     )
     assert len(errors) == 1
     assert errors[0].reason == "missing_contract"
+
+
+# ---------------------------------------------------------------------------
+# verify_db — run a MongoSource pipeline against a DB-derived synthetic contract
+# ---------------------------------------------------------------------------
+
+
+class _WidgetBronze(ValidatedStruct):
+    """Bronze contract that *requires* ``required_note``."""
+
+    mongo_id: str
+    name: str | None
+    required_note: str | None
+
+    @classmethod
+    def rules(cls) -> list[ValidationRule]:
+        return [NotNullRule(column="required_note")]
+
+
+class _WidgetInputs(Inputs):
+    upstream: Annotated[
+        DataFrame,
+        MongoSource(db="shop", collection="widgets", schema=_WidgetBronze.to_struct()),
+    ]
+
+
+def _widget_compute(inputs: _WidgetInputs) -> DataFrame:
+    """Bronze pass-through transform."""
+    from utils.dataframes import create_dataframe
+
+    return create_dataframe(inputs.upstream, _WidgetBronze.to_struct())
+
+
+def _widget_meta() -> Any:
+    return SimpleNamespace(
+        inputs_cls=_WidgetInputs,
+        original_fn=_widget_compute,
+        model=_WidgetBronze,
+        module="poorbricks.test_verify",
+    )
+
+
+def _stub_fetcher(
+    real_docs: list[dict[str, Any]],
+) -> Callable[[str, str, int], dict[str, Any]]:
+    """Build a /v1/db-contract stub from documents a collection would hold."""
+    from utils.schema_infer import infer
+    from utils.synth_data import generate
+
+    result = infer(real_docs)
+    contract = {
+        "schema_json": result.struct.jsonValue(),
+        "example_rows": generate(result.struct, result.profile, n=15),
+    }
+    return lambda _db, _collection, _n: contract
+
+
+@pytest.mark.spark
+def test_verify_db_catches_contract_field_absent_from_collection(
+    spark: SparkSession,
+) -> None:
+    """watson_tasks-class regression: the contract requires ``required_note``
+    but the real collection never provides it — verify --mode db must fail."""
+    real_docs = [{"_id": f"{i:024x}", "name": f"w{i}"} for i in range(15)]
+    errors = _verify_db_pipeline(
+        "postgres:widget",
+        _widget_meta(),
+        {"upstream": _WidgetInputs.sources()["upstream"]},
+        _stub_fetcher(real_docs),
+        sample_size=15,
+        spark=spark,
+    )
+    assert errors, "verify_db must flag a required field missing from real data"
+    assert any(e.category in {"rule", "run_error"} for e in errors)
+
+
+@pytest.mark.spark
+def test_verify_db_passes_when_collection_matches_contract(
+    spark: SparkSession,
+) -> None:
+    """Real data carries ``requiredNote`` (camelCase) — the production
+    document-prep path renames it to ``required_note`` and verify passes."""
+    real_docs = [
+        {"_id": f"{i:024x}", "name": f"w{i}", "requiredNote": "ok note"}
+        for i in range(15)
+    ]
+    errors = _verify_db_pipeline(
+        "postgres:widget",
+        _widget_meta(),
+        {"upstream": _WidgetInputs.sources()["upstream"]},
+        _stub_fetcher(real_docs),
+        sample_size=15,
+        spark=spark,
+    )
+    assert errors == []
