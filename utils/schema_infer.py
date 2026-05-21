@@ -7,8 +7,10 @@ production, so format-handling bugs surface instead of being masked.
 
 The profile records, per field, enough shape detail (string length bands,
 detected text format, numeric ranges, array lengths) for ``utils.synth_data``
-to generate realistic — but entirely synthetic — example rows. No real
-document value is ever copied into the profile or the generated rows.
+to generate realistic example rows. Free-text and high-cardinality values
+never reach the profile — the one deliberate exception is low-cardinality
+enum-like fields, whose small set of short, repeated values is recorded as
+``categories`` so synthetic rows stay valid against enum ValidationRules.
 """
 
 from __future__ import annotations
@@ -46,6 +48,13 @@ _UUID_RE = re.compile(
 _HEX24_RE = re.compile(r"^[0-9a-fA-F]{24}$")
 
 Profile = dict[str, Any]
+
+# A plain-text string field whose sampled values collapse to a small set of
+# short, repeated distinct values is treated as an enum: its real value set is
+# recorded so synth_data can draw guaranteed-valid examples. The guards keep
+# free text and PII (high-cardinality or long values) out of the profile.
+_MAX_CATEGORIES = 30
+_MAX_CATEGORY_LEN = 40
 
 
 @dataclass
@@ -201,13 +210,40 @@ def _infer_array(
 
 def _string_profile(values: list[str]) -> Profile:
     lengths = [len(v) for v in values] or [0]
-    return {
+    fmt = _detect_format(values)
+    prof: Profile = {
         "type": "string",
         "min_len": min(lengths),
         "max_len": max(lengths),
         "avg_len": round(sum(lengths) / len(lengths)),
-        "format": _detect_format(values),
+        "format": fmt,
     }
+    categories = _categorical_values(values) if fmt == "plain" else None
+    if categories is not None:
+        prof["categories"] = categories
+    return prof
+
+
+def _categorical_values(values: list[str]) -> list[str] | None:
+    """Return the sorted distinct values when a plain-text field is a
+    low-cardinality enum (status, channel, role, ...).
+
+    Enum-like fields must be represented by their real value set so
+    ``synth_data`` draws guaranteed-valid examples — otherwise a pipeline's
+    enum ``ValidationRule``s reject the synthetic ``verify --mode db`` data.
+    A field qualifies only when its sampled values collapse to a few
+    (``2..=_MAX_CATEGORIES``), short (``<=_MAX_CATEGORY_LEN`` chars), genuinely
+    repeated distinct values; free text, ids and PII fail these guards and
+    keep their values out of the profile.
+    """
+    distinct = set(values)
+    if not 2 <= len(distinct) <= _MAX_CATEGORIES:
+        return None
+    if len(distinct) > len(values) // 2:
+        return None
+    if any(len(v) > _MAX_CATEGORY_LEN for v in distinct):
+        return None
+    return sorted(distinct)
 
 
 def _detect_format(values: list[str]) -> str:

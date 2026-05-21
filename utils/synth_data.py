@@ -1,9 +1,12 @@
-"""Generate realistic — but entirely synthetic — rows from an inferred schema.
+"""Generate realistic rows from an inferred schema.
 
 Driven by the schema + per-field profile produced by ``utils.schema_infer``.
-No real document value is ever used: only aggregate shape (length bands,
-detected text format, numeric ranges, array lengths) informs generation. This
-keeps real production data out of contracts and out of CI.
+Generation is synthetic — aggregate shape (length bands, detected text format,
+numeric ranges, array lengths) drives free-text and numeric fields, keeping
+real production data out of contracts and CI. The one exception is
+low-cardinality enum fields: their real value set (recorded by the profiler
+as ``categories``) is sampled directly, so generated rows never violate a
+pipeline's enum ``ValidationRule``s.
 
 Rows are **schema-complete** — every field is present in every row — so they
 satisfy ``utils.dataframes.create_dataframe``'s strict all-fields check.
@@ -117,6 +120,11 @@ def _gen_datetime(rng: random.Random) -> datetime:
 
 
 def _gen_string(fprof: Profile, rng: random.Random) -> str:
+    # Enum-like field: draw from the real observed value set so the row is
+    # always valid against the pipeline's enum ValidationRules.
+    categories = fprof.get("categories")
+    if categories:
+        return str(rng.choice(categories))
     fmt = fprof.get("format", "plain")
     target = max(1, int(fprof.get("avg_len", 12) or 12))
     if fmt == "html":

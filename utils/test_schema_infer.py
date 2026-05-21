@@ -101,3 +101,25 @@ def test_string_length_profile() -> None:
     assert profile["min_len"] == 2
     assert profile["max_len"] == 4
     assert profile["avg_len"] == 3
+
+
+def test_low_cardinality_field_records_categories() -> None:
+    # A short, few-valued, repeated field is an enum: its real value set is
+    # recorded so synth_data can draw guaranteed-valid examples.
+    docs = [{"status": s} for s in ["SENT", "READ", "FAILED"] * 20]
+    profile = infer(docs).profile["status"]
+    assert profile["categories"] == ["FAILED", "READ", "SENT"]
+
+
+def test_high_cardinality_text_records_no_categories() -> None:
+    # Free text is high-cardinality — it must never reach the profile.
+    docs = [
+        {"note": f"unique clinical note number {i} for a patient"} for i in range(60)
+    ]
+    assert "categories" not in infer(docs).profile["note"]
+
+
+def test_long_repeated_value_is_not_categorical() -> None:
+    # Repetition alone is not enough: long values are free text / PII, not enums.
+    secret = "patient Jane Doe SSN 123456789 confidential record"
+    assert "categories" not in infer([{"content": secret}] * 8).profile["content"]
