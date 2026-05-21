@@ -209,8 +209,11 @@ def _render_volumes_and_env() -> str:
             ),
         ]
 
+        # Requests are deliberately small so worker pods schedule onto the
+        # single (RWO-PVC-pinned, shared) DAG node even when it is busy; the
+        # limits still let a pipeline burst into real CPU / memory.
         _WORKER_RESOURCES = k8s.V1ResourceRequirements(
-            requests={"cpu": "500m", "memory": "2Gi", "ephemeral-storage": "2Gi"},
+            requests={"cpu": "250m", "memory": "1Gi", "ephemeral-storage": "1Gi"},
             limits={"cpu": "2", "memory": "4Gi", "ephemeral-storage": "20Gi"},
         )
 
@@ -283,7 +286,12 @@ def _render_build_task() -> str:
                 on_finish_action="delete_pod",
                 reattach_on_restart=False,
                 do_xcom_push=False,
-                image_pull_policy="Always",
+                # The image tag is an immutable git SHA, so skip the re-pull of
+                # the multi-GB image on every task — pods start far faster.
+                image_pull_policy="IfNotPresent",
+                # All worker pods are pinned (RWO PVC) to one shared node, so a
+                # pod may sit Pending while siblings finish; wait, don't fail.
+                startup_timeout_seconds=900,
                 dag=dag,
             )
         """
