@@ -5,14 +5,16 @@ runs ``poorbricks verify --mode local`` against ``test_table_repo/tables/``.
 Proves the package import boundary works — i.e. the published wheel
 exports everything a downstream repo needs to run ``poorbricks verify``.
 
-The fixture repo ``test_table_repo/tables/`` intentionally includes a
-``missing_contract`` pipeline, so the CLI is expected to exit non-zero with
-``"missing_contract"`` in stdout. A non-zero exit without that token, or a
-zero exit at all, is the actual failure.
+``verify`` resolves contracts over HTTP from the poorbricks server, so the
+test stands up a tiny stub server and points ``--contract-url`` at it. The
+stub answers every ``/v1/contracts/*`` lookup with 404, so every fixture
+pipeline reports a missing contract — the CLI must exit non-zero and name
+the broken pipelines (including ``missing_contract``) in stdout. A zero
+exit, or a non-zero exit without that token, is the actual failure.
 
-This test does not need MongoDB or PostgreSQL at runtime (the underlying
-``poorbricks verify --mode local`` is offline), so it is marked ``slow``
-rather than ``integration``.
+This test needs neither MongoDB nor PostgreSQL — contract resolution is
+fully served by the in-process stub — so it is marked ``slow`` rather
+than ``integration``.
 
 Run with:
     poetry run pytest tests/test_wheel_install_boundary.py \
@@ -21,10 +23,12 @@ Run with:
 
 from __future__ import annotations
 
+import http.server
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -34,6 +38,33 @@ pytestmark = pytest.mark.slow
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TABLES_ROOT = REPO_ROOT / "test_table_repo" / "tables"
+
+
+class _NotFoundContractHandler(http.server.BaseHTTPRequestHandler):
+    """Answers every contract lookup with 404 — the framework reads that
+    as a missing contract."""
+
+    def do_GET(self) -> None:  # noqa: N802 — name fixed by BaseHTTPRequestHandler
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"detail": "contract not found"}')
+
+    def log_message(self, *args: object) -> None:
+        """Silence the default per-request stderr logging."""
+
+
+@pytest.fixture
+def contract_stub_url() -> Iterator[str]:
+    """Run a stub poorbricks server that 404s every contract, yield its URL."""
+    server = http.server.HTTPServer(("127.0.0.1", 0), _NotFoundContractHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
 
 
 @pytest.fixture(scope="session")
@@ -79,7 +110,7 @@ def verify_cli(built_wheel: Path) -> Iterator[Path]:
 
 
 def test_verify_cli_runs_from_installed_wheel_and_reports_missing_contract(
-    verify_cli: Path,
+    verify_cli: Path, contract_stub_url: str
 ) -> None:
     """The installed CLI must run, exit non-zero, and name the broken pipeline."""
     assert TABLES_ROOT.exists(), f"fixture directory missing: {TABLES_ROOT}"
@@ -93,7 +124,7 @@ def test_verify_cli_runs_from_installed_wheel_and_reports_missing_contract(
             "--tables-root",
             str(TABLES_ROOT),
             "--contract-url",
-            "",
+            contract_stub_url,
         ],
         text=True,
         capture_output=True,

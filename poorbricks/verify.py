@@ -493,9 +493,9 @@ def main(argv: list[str] | None = None) -> None:
         "--contract-url",
         default=_DEFAULT_CONTRACT_URL,
         help=(
-            "(local mode) base URL of the poorbricks server to fetch contracts from. "
-            f"Defaults to the internal Tailscale endpoint. "
-            "Pass empty string to use direct MongoDB access instead."
+            "(local mode) base URL of the poorbricks server to fetch contracts "
+            "from. Defaults to the internal Tailscale endpoint; pass empty to "
+            "use settings.contracts_api_url."
         ),
     )
     args = parser.parse_args(argv)
