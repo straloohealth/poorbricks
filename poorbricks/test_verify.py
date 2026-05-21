@@ -234,3 +234,22 @@ def test_verify_db_does_not_enforce_production_expectations(
         spark=spark,
     )
     assert errors == []
+
+
+@pytest.mark.spark
+def test_verify_db_skips_empty_collection(spark: SparkSession) -> None:
+    """An empty collection yields no DB-derived contract — db mode has no data
+    to exercise the pipeline, so it skips with a warning instead of failing."""
+
+    def _empty_fetcher(db: str, collection: str, n: int) -> dict[str, Any]:
+        raise KeyError(f"{db}.{collection}")
+
+    errors = _verify_db_pipeline(
+        "postgres:widget",
+        _widget_meta(),
+        {"upstream": _WidgetInputs.sources()["upstream"]},
+        _empty_fetcher,
+        sample_size=15,
+        spark=spark,
+    )
+    assert errors == []
