@@ -253,8 +253,21 @@ def _handle_upload(
             code_root=cfg.code_pvc_root,
             prefix=prefix,
         )
+        from poorbricks.airflow.workflow import derive_task_dependencies
+        from poorbricks.depgraph import CycleError
+        from poorbricks.registry import all_pipelines
+
+        pipelines = all_pipelines()
         dag_names: list[str] = []
         for wf in workflows:
+            try:
+                wf = derive_task_dependencies(wf, pipelines)
+            except CycleError as exc:
+                return _fail(f"workflow {wf.name!r} has a dependency cycle: {exc}")
+            except KeyError as exc:
+                return _fail(
+                    f"workflow {wf.name!r} references unregistered pipeline {exc}"
+                )
             content = generate_dag_file(
                 wf,
                 prefix=prefix,

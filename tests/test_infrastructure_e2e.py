@@ -20,8 +20,6 @@ tasks:
     pipeline: postgres:sample_users
   - id: gold_patients
     pipeline: postgres:gold_patients
-    depends_on:
-      - sample_users
 """
 
 _SIMPLE_WORKFLOW_YAML = """\
@@ -47,26 +45,17 @@ class TestWorkflowParsing:
         assert wf.name == "gold_pipeline"
         assert len(wf.tasks) > 0
 
-    def test_task_dependencies_resolved(self, tmp_path: Path) -> None:
-        """Verify task dependencies are correctly parsed."""
+    def test_all_tasks_parsed(self, tmp_path: Path) -> None:
+        """Verify every task in the YAML is parsed. Ordering is derived later."""
         from poorbricks.airflow.workflow import load_workflow
 
         wf_path = tmp_path / "gold_pipeline.yaml"
         wf_path.write_text(_GOLD_PIPELINE_YAML)
 
         wf = load_workflow(wf_path)
-        assert len(wf.tasks) == 2
-
-        sample_users_task = next((t for t in wf.tasks if t.id == "sample_users"), None)
-        gold_patients_task = next(
-            (t for t in wf.tasks if t.id == "gold_patients"), None
-        )
-
-        assert sample_users_task is not None, "sample_users task not found"
-        assert gold_patients_task is not None, "gold_patients task not found"
-        assert "sample_users" in gold_patients_task.depends_on, (
-            "gold_patients should depend on sample_users"
-        )
+        assert {t.id for t in wf.tasks} == {"sample_users", "gold_patients"}
+        # depends_on is derived from pipeline inputs, never parsed from YAML.
+        assert all(t.depends_on == () for t in wf.tasks)
 
     def test_invalid_cron_raises_error(self, tmp_path: Path) -> None:
         """Verify invalid cron expression raises WorkflowParseError."""
@@ -84,23 +73,24 @@ tasks:
         with pytest.raises(WorkflowParseError):
             load_workflow(wf_path)
 
-    def test_unknown_depends_on_raises_error(self, tmp_path: Path) -> None:
-        """Verify referencing unknown task in depends_on raises WorkflowParseError."""
+    def test_depends_on_in_yaml_rejected(self, tmp_path: Path) -> None:
+        """Verify a depends_on key in the YAML raises WorkflowParseError."""
         from poorbricks.airflow.workflow import WorkflowParseError, load_workflow
 
         invalid_yaml = """
 name: test_workflow
+schedule: "0 * * * *"
 tasks:
   - id: task1
-    image: test:latest
+    pipeline: postgres:task1
   - id: task2
-    image: test:latest
+    pipeline: postgres:task2
     depends_on:
-      - unknown_task
+      - task1
 """
         wf_path = tmp_path / "invalid.yaml"
         wf_path.write_text(invalid_yaml)
-        with pytest.raises(WorkflowParseError):
+        with pytest.raises(WorkflowParseError, match="depends_on is not accepted"):
             load_workflow(wf_path)
 
     def test_duplicate_task_id_raises_error(self, tmp_path: Path) -> None:
@@ -195,21 +185,6 @@ class TestDagGeneration:
             f"DAG_ID = '{expected_dag_id}'" in dag_source
             or f'DAG_ID = "{expected_dag_id}"' in dag_source
         )
-
-    def test_task_dependency_wired_correctly(self, tmp_path: Path) -> None:
-        """Verify task dependencies are wired in DAG Python code (>> operator)."""
-        from poorbricks.airflow.dag_generator import generate_dag_file
-
-        wf = self._load_gold_pipeline(tmp_path)
-        dag_source = generate_dag_file(
-            wf,  # type: ignore[arg-type]
-            prefix="test",
-            image="test/image:latest",
-            namespace="test-ns",
-            runtime_secret="test-secret",
-        )
-
-        assert ">>" in dag_source, "No task dependencies (>>) found in DAG"
 
     def test_dag_uses_pvc_code_mount(self, tmp_path: Path) -> None:
         """Verify DAG uses PVC subpath mount for code, not an init container."""

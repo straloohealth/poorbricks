@@ -9,7 +9,7 @@ from pyspark.sql import DataFrame
 
 from poorbricks import Inputs
 from poorbricks.inputs import ContractSource, TableSource
-from poorbricks.verify import _check_pipeline_contracts
+from poorbricks.verify import _check_pipeline_contracts, _dependency_cycle
 from validation import ValidatedStruct
 
 
@@ -33,6 +33,14 @@ class _DriftConsumerInputs(Inputs):
 
 class _ContractConsumerInputs(Inputs):
     up: Annotated[DataFrame, ContractSource("users_bronze")]
+
+
+class _CycleAInputs(Inputs):
+    up: Annotated[DataFrame, TableSource("table_b", _UserModel)]
+
+
+class _CycleBInputs(Inputs):
+    up: Annotated[DataFrame, TableSource("table_a", _UserModel)]
 
 
 def _no_contracts(table_name: str) -> dict[str, Any]:
@@ -100,3 +108,21 @@ def test_cross_repo_missing_contract_fails() -> None:
     )
     assert len(errors) == 1
     assert errors[0].reason == "missing_contract"
+
+
+def test_dependency_cycle_detected() -> None:
+    """Mutually-dependent in-bundle tables are reported as a cycle."""
+    cycle = _dependency_cycle(
+        {
+            "table_a": _meta(_CycleAInputs),
+            "table_b": _meta(_CycleBInputs),
+        }
+    )
+    assert cycle is not None
+    assert sorted(cycle) == ["table_a", "table_b"]
+
+
+def test_no_dependency_cycle_returns_none() -> None:
+    """An acyclic in-bundle graph yields no cycle."""
+    # Keyed as "dim_x"; its upstream "users_bronze" is not in the bundle.
+    assert _dependency_cycle({"dim_x": _meta(_TableConsumerInputs)}) is None
