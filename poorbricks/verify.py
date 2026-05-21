@@ -1,6 +1,6 @@
 """Contract and expectations verification for a table-repo.
 
-Three modes:
+Four modes:
 
 * ``verify_local`` — schema-only check against the contracts store. Fast, no
   Spark. Detects: missing contracts; for ``TableSource`` inputs, schema
@@ -14,6 +14,12 @@ Three modes:
   ``MONGO_URI`` env var, samples 100 oldest + 100 newest docs per collection,
   and checks that every field declared in each ``MongoSource`` schema is
   present in at least one sampled document.
+
+* ``verify_db`` — runs every ``MongoSource`` pipeline against a DB-derived
+  synthetic contract fetched from the poorbricks server: the server profiles
+  the live collection and generates synthetic example rows in MongoDB's native
+  format. The rows are fed through the production document-prep path, so a
+  pipeline that mishandles the real document shape fails here.
 
 Used by the ``poorbricks-verify`` CLI in ``[tool.poetry.scripts]``.
 """
@@ -457,13 +463,194 @@ def verify_ci(
     return errors
 
 
+def _db_contract_fetcher(
+    base_url: str,
+) -> Callable[[str, str, int], dict[str, Any]]:
+    """Build a fetcher for the poorbricks server's ``/v1/db-contract`` endpoint.
+
+    Raises KeyError on 404 (empty collection — no contract could be inferred).
+    """
+    import requests
+
+    def fetch(db: str, collection: str, sample_size: int) -> dict[str, Any]:
+        url = f"{base_url.rstrip('/')}/v1/db-contract"
+        resp = requests.get(
+            url,
+            params={
+                "db": db,
+                "collection": collection,
+                "sample_size": str(sample_size),
+            },
+            timeout=120,
+        )
+        if resp.status_code == 404:
+            raise KeyError(f"{db}.{collection}")
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+    return fetch
+
+
+def _coerce_doc(value: Any, dtype: Any) -> Any:
+    """Restore JSON-decoded values to typed values against an inferred schema.
+
+    The ``/v1/db-contract`` endpoint returns example rows as JSON, so
+    timestamps and dates arrive as ISO strings. Restore them to datetime/date
+    so the synthetic docs match what the production MongoDB reader hands a
+    pipeline.
+    """
+    from datetime import date, datetime
+
+    from pyspark.sql.types import ArrayType, DateType, StructType, TimestampType
+
+    if value is None:
+        return None
+    if isinstance(dtype, StructType):
+        if not isinstance(value, dict):
+            return value
+        field_types = {f.name: f.dataType for f in dtype.fields}
+        return {k: _coerce_doc(v, field_types.get(k)) for k, v in value.items()}
+    if isinstance(dtype, ArrayType):
+        if not isinstance(value, list):
+            return value
+        return [_coerce_doc(item, dtype.elementType) for item in value]
+    if isinstance(dtype, TimestampType) and isinstance(value, str):
+        return datetime.fromisoformat(value)
+    if isinstance(dtype, DateType) and isinstance(value, str):
+        return date.fromisoformat(value)
+    return value
+
+
+def _verify_db_pipeline(
+    key: str,
+    meta: PipelineMeta,
+    mongo_inputs: dict[str, MongoSource],
+    fetcher: Callable[[str, str, int], dict[str, Any]],
+    sample_size: int,
+    spark: Any,
+) -> list[VerificationError]:
+    """Run one MongoSource pipeline against its DB-derived synthetic contract."""
+    from pyspark.sql.types import StructType
+
+    from poorbricks.runner import _execute_pipeline
+    from utils.mongo import _prepare_doc, _resolve_id_field
+
+    dataframes: dict[str, Any] = {}
+    for input_name, spec in mongo_inputs.items():
+        try:
+            contract = fetcher(spec.db, spec.collection, sample_size)
+        except KeyError:
+            return [
+                VerificationError(
+                    pipeline_key=key,
+                    category="run_error",
+                    message=(
+                        f"{input_name}: {spec.db}.{spec.collection} is empty — "
+                        "no DB-derived contract could be built"
+                    ),
+                )
+            ]
+        except Exception as exc:
+            return [
+                VerificationError(
+                    pipeline_key=key,
+                    category="run_error",
+                    message=f"{input_name}: db-contract fetch failed: {exc}",
+                )
+            ]
+        try:
+            inferred = StructType.fromJson(contract["schema_json"])
+            field_names = [f.name for f in spec.schema.fields]
+            id_field = _resolve_id_field(spec.schema)
+            rows = [
+                _prepare_doc(_coerce_doc(doc, inferred), id_field, field_names)
+                for doc in contract["example_rows"]
+            ]
+            dataframes[input_name] = spark.createDataFrame(rows, spec.schema)
+        except Exception as exc:
+            return [
+                VerificationError(
+                    pipeline_key=key,
+                    category="run_error",
+                    message=(
+                        f"{input_name}: building input from db-contract failed: {exc}"
+                    ),
+                )
+            ]
+
+    try:
+        inputs = meta.inputs_cls.from_dataframes(dataframes)
+        result = _execute_pipeline(meta, inputs)
+    except Exception as exc:
+        return [
+            VerificationError(pipeline_key=key, category="run_error", message=str(exc))
+        ]
+
+    errors = [
+        VerificationError(pipeline_key=key, category="rule", message=msg)
+        for msg in result.errors
+    ]
+    if result.df is not None:
+        expectations_cls = _find_expectations_for(meta)
+        if expectations_cls is not None:
+            for violation in expectations_cls.check(  # type: ignore[attr-defined]
+                result.df, enforce_min_rows=False
+            ):
+                errors.append(
+                    VerificationError(
+                        pipeline_key=key, category="expectation", message=violation
+                    )
+                )
+    return errors
+
+
+def verify_db(
+    tables_root: Path | None = None,
+    contract_url: str = _DEFAULT_CONTRACT_URL,
+    sample_size: int = 1000,
+    fetcher: Callable[[str, str, int], dict[str, Any]] | None = None,
+) -> list[VerificationError]:
+    """Run every ``MongoSource`` pipeline against a DB-derived synthetic contract.
+
+    For each pipeline with ``MongoSource`` inputs, fetch a synthetic contract
+    (inferred schema + generated example rows) from the poorbricks server, feed
+    the rows through the production MongoDB document-prep path, run the
+    pipeline, and check rules + expectations. Pipelines with no ``MongoSource``
+    input are skipped.
+
+    Hard-fails (a ``VerificationError``) on an empty collection, an unreachable
+    server, or any rule / expectation violation. ``fetcher`` is injectable for
+    tests; by default it calls the poorbricks server at ``contract_url``.
+    """
+    from poorbricks.runner import _ensure_local_spark
+
+    discover_all_pipelines(tables_root)
+    if fetcher is None:
+        fetcher = _db_contract_fetcher(contract_url)
+    errors: list[VerificationError] = []
+    for key, meta in all_pipelines().items():
+        mongo_inputs = {
+            name: spec
+            for name, spec in meta.inputs_cls.sources().items()
+            if isinstance(spec, MongoSource)
+        }
+        if not mongo_inputs:
+            continue
+        spark = _ensure_local_spark()
+        errors.extend(
+            _verify_db_pipeline(key, meta, mongo_inputs, fetcher, sample_size, spark)
+        )
+        _stop_spark_if_running()
+    return errors
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="poorbricks verify",
         description="Verify table-repo contracts and expectations",
     )
     parser.add_argument(
-        "--mode", choices=["local", "ci", "arch", "mongo"], required=True
+        "--mode", choices=["local", "ci", "arch", "mongo", "db"], required=True
     )
     parser.add_argument(
         "--tables-root",
@@ -486,16 +673,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--sample-size",
         type=int,
-        default=100,
-        help="(mongo mode) number of oldest + newest docs to sample per collection",
+        default=None,
+        help=(
+            "documents to sample per collection. mongo mode: oldest + newest "
+            "(default 100); db mode: random via $sample (default 1000)."
+        ),
     )
     parser.add_argument(
         "--contract-url",
         default=_DEFAULT_CONTRACT_URL,
         help=(
-            "(local mode) base URL of the poorbricks server to fetch contracts "
-            "from. Defaults to the internal Tailscale endpoint; pass empty to "
-            "use settings.contracts_api_url."
+            "base URL of the poorbricks server. Used by local mode (fetch "
+            "contracts) and db mode (fetch DB-derived contracts). Defaults to "
+            "the internal Tailscale endpoint; pass empty to use "
+            "settings.contracts_api_url."
         ),
     )
     args = parser.parse_args(argv)
@@ -510,7 +701,13 @@ def main(argv: list[str] | None = None) -> None:
     elif args.mode == "mongo":
         errors = verify_mongo(
             tables_root=args.tables_root,
-            sample_size=args.sample_size,
+            sample_size=args.sample_size if args.sample_size is not None else 100,
+        )
+    elif args.mode == "db":
+        errors = verify_db(
+            tables_root=args.tables_root,
+            contract_url=args.contract_url,
+            sample_size=args.sample_size if args.sample_size is not None else 1000,
         )
     else:
         errors = verify_ci(
@@ -535,6 +732,7 @@ __all__ = [
     "VerificationError",
     "main",
     "verify_ci",
+    "verify_db",
     "verify_local",
     "verify_mongo",
     "ArchError",

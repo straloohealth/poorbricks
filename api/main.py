@@ -22,8 +22,10 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +64,18 @@ def _set_phase(phase: str, **extra: Any) -> None:
     print(f"[upload] phase: {phase}", flush=True)
 
 
+# In-memory cache for GET /v1/db-contract. Inferring a contract is expensive
+# (sample 1000 docs + infer schema + synthesize rows), so each
+# (db, collection, sample_size) result is cached for 24h. Process-local is
+# sufficient — the API deployment runs a single replica.
+_MONGO_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+_DB_CONTRACT_TTL_SECONDS = 24 * 60 * 60
+_DB_CONTRACT_MAX_SAMPLE = 5000
+_DB_CONTRACT_EXAMPLE_ROWS = 25
+_db_contract_cache: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
+_db_contract_lock = threading.Lock()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -88,6 +102,33 @@ def get_contract_endpoint(table_name: str) -> dict[str, Any]:
     except KeyError:
         raise HTTPException(
             status_code=404, detail=f"Contract {table_name!r} not found"
+        )
+
+
+@app.get("/v1/db-contract")
+async def db_contract_endpoint(
+    db: str, collection: str, sample_size: int = 1000
+) -> dict[str, Any]:
+    """Infer a contract from a live MongoDB collection.
+
+    Samples up to ``sample_size`` random documents from ``db.collection``,
+    infers a native-format schema + per-field profile, and generates
+    *synthetic* example rows from that profile — no real document value is
+    ever returned. Results are cached in memory for 24h.
+    """
+    from utils.mongo_sample import EmptyCollectionError
+
+    _validate_mongo_name(db, "db")
+    _validate_mongo_name(collection, "collection")
+    size = max(1, min(sample_size, _DB_CONTRACT_MAX_SAMPLE))
+    try:
+        return await run_in_threadpool(_get_or_build_db_contract, db, collection, size)
+    except EmptyCollectionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 — surface any Mongo/inference failure
+        raise HTTPException(
+            status_code=503,
+            detail=f"could not build db-contract for {db}.{collection}: {exc}",
         )
 
 
@@ -166,6 +207,55 @@ def _validate_sha(sha: str) -> None:
             status_code=400,
             detail=f"sha contains invalid characters: {sha!r}",
         )
+
+
+def _validate_mongo_name(value: str, label: str) -> None:
+    if not value or not _MONGO_NAME_RE.fullmatch(value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} must match [A-Za-z0-9_.-]+, got {value!r}",
+        )
+
+
+def _get_or_build_db_contract(
+    db: str, collection: str, sample_size: int
+) -> dict[str, Any]:
+    """Return a cached db-contract, or build + cache a fresh one (24h TTL)."""
+    key = (db, collection, sample_size)
+    now = time.time()
+    with _db_contract_lock:
+        cached = _db_contract_cache.get(key)
+        if cached is not None and now - cached[0] < _DB_CONTRACT_TTL_SECONDS:
+            return {**cached[1], "cache": "hit"}
+    # Sample + infer + synthesize outside the lock — a cold-key double-build
+    # race is harmless (last write wins) and the slow work must not block
+    # concurrent requests for other collections.
+    contract = _build_db_contract(db, collection, sample_size)
+    with _db_contract_lock:
+        _db_contract_cache[key] = (time.time(), contract)
+    return {**contract, "cache": "miss"}
+
+
+def _build_db_contract(db: str, collection: str, sample_size: int) -> dict[str, Any]:
+    """Sample the live collection, infer its schema, generate synthetic rows."""
+    from poorbricks.settings import settings as fw_settings
+    from utils.mongo_sample import sample_random_docs
+    from utils.schema_infer import infer
+    from utils.synth_data import generate
+
+    docs = sample_random_docs(fw_settings.mongo_uri, db, collection, sample_size)
+    result = infer(docs)
+    example_rows = generate(result.struct, result.profile, n=_DB_CONTRACT_EXAMPLE_ROWS)
+    return {
+        "db": db,
+        "collection": collection,
+        "schema_json": result.struct.jsonValue(),
+        "example_rows": example_rows,
+        "field_profile": result.profile,
+        "sampled_count": len(docs),
+        "inferred_at": datetime.now(UTC).isoformat(),
+        "warnings": result.warnings,
+    }
 
 
 def _handle_upload(
