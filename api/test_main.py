@@ -104,6 +104,39 @@ def test_upload_rejects_table_repo_with_missing_contract(client: TestClient) -> 
     assert response.status_code == 422
     assert body["ok"] is False
     assert any("missing_contract" in e or "ContractError" in e for e in body["errors"])
+    # The failure response carries a phase trail showing how far it got.
+    assert any(p["name"] == "verify_local" for p in body.get("phases", []))
+
+
+def test_status_reports_phase(client: TestClient) -> None:
+    """/v1/status reports the upload phase (idle when no upload is running)."""
+    body = client.get("/v1/status").json()
+    assert body["busy"] is False
+    assert body["phase"] == "idle"
+
+
+def test_upload_internal_error_returns_structured_500(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unexpected exception in _handle_upload yields a structured JSON 500
+    (message + phase + traceback), never an empty body — so a CI upload
+    failure is never silent."""
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated extract failure")
+
+    monkeypatch.setattr("api.main._extract_safely", _boom)
+    response = client.post(
+        "/v1/upload",
+        data={"prefix": "smith", "sha": "abc123"},
+        files={"code": ("c.tar.gz", b"not-a-real-tarball", "application/gzip")},
+    )
+    assert response.status_code == 500
+    body = response.json()
+    assert body["ok"] is False
+    assert "simulated extract failure" in body["message"]
+    assert body["phase"] == "extracting"
+    assert isinstance(body["traceback"], list) and body["traceback"]
 
 
 # ---------------------------------------------------------------------------

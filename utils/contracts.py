@@ -1,8 +1,15 @@
-"""MongoDB data_contracts collection operations: fetch, profile, and push table contracts."""
+"""Table contract operations.
+
+Contracts live in a MongoDB ``data_contracts`` collection that only the
+poorbricks server can reach. Consumers (CI, fixtures, ``verify``) resolve
+contracts over HTTP from the server via :func:`fetch_contract`; the Mongo
+helpers below are server-side only.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import pymongo
@@ -11,6 +18,10 @@ from pyspark.sql import functions as f
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
     from pyspark.sql.types import StructType
+
+# Keep the contract HTTP fetch snappy: a missing/unreachable server should
+# fail in seconds, not stall every test for pymongo's 30s default.
+_CONTRACT_HTTP_TIMEOUT_SECONDS = 10
 
 
 def _client() -> pymongo.MongoClient[Any]:
@@ -25,8 +36,11 @@ def _client() -> pymongo.MongoClient[Any]:
     return pymongo.MongoClient(uri)
 
 
-def fetch_contract(table_name: str) -> dict[str, Any]:
-    """Look up a contract by table_name in the contracts store.
+def fetch_contract_from_mongo(table_name: str) -> dict[str, Any]:
+    """Read a contract straight from the MongoDB contracts store.
+
+    Server-side only — the poorbricks server has Mongo access and is what
+    exposes contracts over HTTP. Consumers must use :func:`fetch_contract`.
 
     Raises KeyError if not found.
     """
@@ -38,6 +52,35 @@ def fetch_contract(table_name: str) -> dict[str, Any]:
     if doc is None:
         raise KeyError(f"No contract found for table {table_name!r}.")
     return doc  # type: ignore[no-any-return]
+
+
+@cache
+def fetch_contract(table_name: str) -> dict[str, Any]:
+    """Resolve a published contract from the poorbricks server over HTTP.
+
+    Contracts live in the server's MongoDB; consumers never connect to Mongo
+    themselves. The server base URL comes from ``settings.contracts_api_url``
+    (the internal Tailscale endpoint by default), so CI only needs network
+    access to the server — no Mongo URI.
+
+    Cached per process: contract schemas are immutable within a run, so the
+    same upstream is fetched at most once across a whole test session.
+
+    Raises KeyError if the server returns 404.
+    """
+    import requests
+
+    from poorbricks.settings import settings
+
+    base = settings.contracts_api_url.rstrip("/")
+    resp = requests.get(
+        f"{base}/v1/contracts/{table_name}",
+        timeout=_CONTRACT_HTTP_TIMEOUT_SECONDS,
+    )
+    if resp.status_code == 404:
+        raise KeyError(f"No contract found for table {table_name!r}.")
+    resp.raise_for_status()
+    return resp.json()  # type: ignore[no-any-return]
 
 
 def list_contracts() -> list[dict[str, Any]]:
@@ -163,6 +206,7 @@ def push_contract(
 
 __all__ = [
     "fetch_contract",
+    "fetch_contract_from_mongo",
     "list_contract_details",
     "list_contracts",
     "profile_dataframe",

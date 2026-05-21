@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     contracts_mongo_uri: str | None = None
     contracts_db: str = "poorbricks"
     contracts_collection: str = "data_contracts"
+    # Base URL of the poorbricks server. Consumers resolve published
+    # contracts over HTTP from here (see utils.contracts.fetch_contract);
+    # they never connect to the contracts MongoDB directly.
+    contracts_api_url: str = (
+        "https://airflow-poorbricks-server-ingress.stingray-ordinal.ts.net"
+    )
     delta_output_dir: str = "artifacts/delta"
     tables_root: Path = Path("tables")
     postgres_host: str = "localhost"

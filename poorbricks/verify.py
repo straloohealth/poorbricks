@@ -685,8 +685,8 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "base URL of the poorbricks server. Used by local mode (fetch "
             "contracts) and db mode (fetch DB-derived contracts). Defaults to "
-            "the internal Tailscale endpoint. Pass empty string in local mode "
-            "to use direct MongoDB access instead."
+            "the internal Tailscale endpoint; pass empty to use "
+            "settings.contracts_api_url."
         ),
     )
     args = parser.parse_args(argv)
