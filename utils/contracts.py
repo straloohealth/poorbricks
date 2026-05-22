@@ -180,28 +180,49 @@ def push_contract(
     """
     from poorbricks.settings import settings
 
+    document = {
+        "_id": table_name,
+        "table_name": table_name,
+        "schema_json": schema.jsonValue(),
+        "example_rows": example_rows,
+        "pipeline_key": pipeline_key,
+        "level": level,
+        "storage": storage,
+        "comment": comment,
+        "module": module,
+        "fields": fields or [],
+        "validation_rules": validation_rules or [],
+        "expectations": expectations or {},
+        "inputs": inputs or [],
+        "fixtures": fixtures or [],
+        "profile": profile,
+        "pushed_at": datetime.utcnow().isoformat(),
+    }
     _client()[settings.contracts_db][settings.contracts_collection].replace_one(
         {"_id": table_name},
-        {
-            "_id": table_name,
-            "table_name": table_name,
-            "schema_json": schema.jsonValue(),
-            "example_rows": example_rows,
-            "pipeline_key": pipeline_key,
-            "level": level,
-            "storage": storage,
-            "comment": comment,
-            "module": module,
-            "fields": fields or [],
-            "validation_rules": validation_rules or [],
-            "expectations": expectations or {},
-            "inputs": inputs or [],
-            "fixtures": fixtures or [],
-            "profile": profile,
-            "pushed_at": datetime.utcnow().isoformat(),
-        },
+        _bson_safe(document),
         upsert=True,
     )
+
+
+def _bson_safe(value: Any) -> Any:
+    """Recursively make a value safe to store in MongoDB/BSON.
+
+    BSON has no ``date`` type — only ``datetime``. A bare ``datetime.date``
+    (e.g. a monthly-grain column's value in ``example_rows``) is promoted to
+    a midnight ``datetime`` so contract upserts never raise ``InvalidDocument``.
+    """
+    from datetime import date, datetime
+
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, dict):
+        return {k: _bson_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_bson_safe(item) for item in value]
+    return value
 
 
 __all__ = [
