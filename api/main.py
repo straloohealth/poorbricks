@@ -226,9 +226,9 @@ async def regenerate() -> JSONResponse:
 
     Migrates already-uploaded DAGs onto a new worker pod spec without
     re-uploading any table repo: each stored DAG already carries its full
-    task graph, so it is parsed back to a workflow and re-rendered. A DAG that
-    fails to parse or render is reported under ``failed`` and left untouched,
-    so one bad DAG never aborts the batch.
+    task graph, so it is parsed back to a workflow and re-rendered against the
+    current worker image. A DAG that fails to parse or render is reported
+    under ``failed`` and left untouched, so one bad DAG never aborts the batch.
     """
     if not _upload_lock.acquire(blocking=False):
         return JSONResponse(
@@ -444,10 +444,15 @@ def _regenerate_all(cfg: ApiSettings) -> dict[str, Any]:
                     schedule=parsed.schedule,
                     tasks=parsed.tasks,
                 )
+                # Bake the *current* worker image, not the one parsed from the
+                # stored DAG: a migration target is precisely a new image (e.g.
+                # the first one carrying the fetch-code init-container module).
+                # Keeping the parsed image would re-render a DAG that cannot
+                # start. ``parsed.image`` is intentionally not used here.
                 content = generate_dag_file(
                     workflow,
                     prefix=prefix,
-                    image=parsed.image,
+                    image=cfg.worker_image,
                     namespace=parsed.namespace,
                     runtime_secret=parsed.runtime_secret,
                     postgres_creds_secret=parsed.postgres_creds_secret,
