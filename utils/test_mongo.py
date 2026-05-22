@@ -62,21 +62,6 @@ class TestSanitizeValue:
         out = _sanitize_value({"a": [oid], "b": {"c": Int64(3)}})
         assert out == {"a": [str(oid)], "b": {"c": 3}}
 
-    def test_snake_cases_nested_dict_keys(self) -> None:
-        """Nested sub-document keys are renamed so they bind to struct fields."""
-        out = _sanitize_value({"fieldName": "Cargo", "fieldValue": "Dev"})
-        assert out == {"field_name": "Cargo", "field_value": "Dev"}
-
-    def test_snake_cases_keys_inside_lists(self) -> None:
-        """A camelCase array-of-struct (e.g. extraFields) is renamed per element."""
-        out = _sanitize_value(
-            [{"fieldName": "a", "fieldValue": "1"}, {"fieldName": "b"}]
-        )
-        assert out == [
-            {"field_name": "a", "field_value": "1"},
-            {"field_name": "b"},
-        ]
-
 
 class TestResolveIdField:
     def test_picks_string_id_field(self) -> None:
@@ -101,6 +86,26 @@ class TestPrepareDoc:
         doc = {"_id": oid, "fullName": "Ada"}
         result = _prepare_doc(doc, "mongo_id", ["mongo_id", "full_name", "score"])
         assert result == (str(oid), "Ada", None)
+
+    def test_nested_subdocument_keys_are_snake_cased(self) -> None:
+        """A camelCase array-of-struct (e.g. extraFields) is renamed per element
+        so it binds to a snake_case nested StructType."""
+        oid = ObjectId()
+        doc = {
+            "_id": oid,
+            "extraFields": [
+                {"fieldName": "Cargo", "fieldValue": "Dev"},
+                {"fieldName": "Unidade"},
+            ],
+        }
+        result = _prepare_doc(doc, "mongo_id", ["mongo_id", "extra_fields"])
+        assert result == (
+            str(oid),
+            [
+                {"field_name": "Cargo", "field_value": "Dev"},
+                {"field_name": "Unidade"},
+            ],
+        )
 
 
 @pytest.fixture
