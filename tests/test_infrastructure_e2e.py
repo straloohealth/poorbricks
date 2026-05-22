@@ -282,8 +282,10 @@ class TestDagGeneration:
         assert "default_args" in dag_source
         assert "retries" in dag_source
 
-    def test_worker_requests_match_limits(self, tmp_path: Path) -> None:
-        """Worker CPU/memory requests equal limits — node is not overcommitted."""
+    def test_worker_requests_below_limits(self, tmp_path: Path) -> None:
+        """Worker requests are well below limits so pods schedule on the single
+        RWO-PVC-pinned DAG node; the limits still allow a real CPU/memory burst.
+        """
         from poorbricks.airflow.dag_generator import generate_dag_file
 
         wf = self._load_gold_pipeline(tmp_path)
@@ -295,9 +297,16 @@ class TestDagGeneration:
             runtime_secret="test-secret",
         )
 
-        # Each value appears exactly twice: once under requests, once limits.
-        assert dag_source.count('"cpu": "2"') == 2
-        assert dag_source.count('"memory": "4Gi"') == 2
+        # Small requests so the pod schedules on the shared, constrained node;
+        # larger limits so a pipeline can still burst.
+        assert '"cpu": "250m"' in dag_source  # request
+        assert '"cpu": "2"' in dag_source  # limit
+        assert '"memory": "1Gi"' in dag_source  # request
+        assert '"memory": "4Gi"' in dag_source  # limit
+        # Request must be strictly below limit — equal would re-create the
+        # "Insufficient cpu" scheduling failure on the single DAG node.
+        assert dag_source.count('"cpu": "2"') == 1
+        assert dag_source.count('"memory": "4Gi"') == 1
 
 
 class TestRunnerTimings:

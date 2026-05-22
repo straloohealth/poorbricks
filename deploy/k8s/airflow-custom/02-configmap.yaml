@@ -11,8 +11,8 @@ data:
     executor = LocalExecutor
     fernet_key = jO0L0C5rEw0yJ_0zyBQ3_c-2x3E_c5yO5zN8xK2yP0A=
     load_examples = False
-    # Capped to what one node can run un-throttled — see deploy plan. Raise
-    # only alongside more nodes (or honest per-task resource measurement).
+    # Bounded so a single DAG does not flood the one shared DAG node with
+    # worker pods. Raise only alongside more nodes / capacity measurement.
     max_active_tasks_per_dag = 3
 
     [scheduler]
