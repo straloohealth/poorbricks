@@ -322,6 +322,9 @@ def code_client(
     dags.mkdir()
     monkeypatch.setenv("POORBRICKS_API_DAG_STORE", "local")
     monkeypatch.setenv("POORBRICKS_API_DAGS_DIR", str(dags))
+    monkeypatch.setenv(
+        "POORBRICKS_API_WORKER_IMAGE", "registry.example/poorbricks:current"
+    )
     monkeypatch.setattr("api.main.settings", ApiSettings())
     yield TestClient(app), dags
 
@@ -386,8 +389,11 @@ def test_regenerate_migrates_legacy_dag(
     # The task graph + format-stable params survived the round trip.
     assert "task_extract >> task_report" in rendered
     assert "DAG_ID = 'myrepo__nightly'" in rendered
-    assert "legacy-image:v1" in rendered
     assert "datetime(2024, 1, 1)" in rendered
+    # The image is refreshed to the current worker image — the stale image
+    # baked in the legacy DAG (which would lack the fetch-code module) is gone.
+    assert "registry.example/poorbricks:current" in rendered
+    assert "legacy-image:v1" not in rendered
 
 
 def test_regenerate_reports_unparseable_dag(
