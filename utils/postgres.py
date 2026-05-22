@@ -18,6 +18,7 @@ from pyspark.sql.types import (
     FloatType,
     IntegerType,
     LongType,
+    MapType,
     StringType,
     StructType,
     TimestampType,
@@ -121,6 +122,21 @@ def _partition_copy_writer(
     return _write_partition
 
 
+def _jsonify_complex_columns(df: DataFrame) -> DataFrame:
+    """Serialise struct/array/map columns to JSON text for Postgres storage.
+
+    Postgres has no column type matching Spark's nested types, so a complex
+    column is stored as JSON text; ``runner._parse_complex_columns`` restores
+    the declared type when the table is read back.
+    """
+    from pyspark.sql import functions as f
+
+    for field in df.schema.fields:
+        if isinstance(field.dataType, ArrayType | MapType | StructType):
+            df = df.withColumn(field.name, f.to_json(f.col(field.name)))
+    return df
+
+
 class PostgresLoader:
     """Load DataFrames into PostgreSQL via COPY FROM STDIN."""
 
@@ -206,6 +222,9 @@ class PostgresLoader:
 
         Returns the row count written.
         """
+        # Struct/array/map columns have no Postgres equivalent — store them as
+        # JSON text; runner._parse_complex_columns restores them on read.
+        df = _jsonify_complex_columns(df)
         columns = df.columns
         staging_name = f"{table_name}__staging"
         conn_params: dict[str, Any] = {

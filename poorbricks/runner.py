@@ -286,7 +286,39 @@ def _read_postgres_table(
         schema_json, level, pg_table, settings.read_partitions
     ).items():
         reader = reader.option(key, value)
-    return reader.load()
+    return _parse_complex_columns(reader.load(), schema_json)
+
+
+def _parse_complex_columns(
+    df: DataFrame, schema_json: dict[str, Any] | None
+) -> DataFrame:
+    """Restore struct/array/map columns from their JSON-text Postgres storage.
+
+    Postgres has no column type matching Spark's nested types, so the writer
+    (``utils.postgres``) serialises struct/array/map columns to JSON text; a
+    JDBC read returns them as plain strings. This parses them back to the
+    complex types declared in ``schema_json`` so downstream transforms see
+    real structs/arrays rather than strings.
+    """
+    if not schema_json:
+        return df
+    from pyspark.sql import functions as f
+    from pyspark.sql.types import ArrayType, MapType, StructType
+
+    try:
+        declared = StructType.fromJson(schema_json)
+    except Exception:
+        return df
+    for schema_field in declared.fields:
+        if schema_field.name in df.columns and isinstance(
+            schema_field.dataType, ArrayType | MapType | StructType
+        ):
+            df = df.withColumn(
+                schema_field.name,
+                # pyspark's from_json stub omits MapType, which it accepts.
+                f.from_json(f.col(schema_field.name), schema_field.dataType),  # type: ignore[arg-type]
+            )
+    return df
 
 
 def _jdbc_partition_options(
