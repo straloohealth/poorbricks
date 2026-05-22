@@ -25,10 +25,15 @@ def _camel_to_snake(name: str) -> str:
 
 
 def _sanitize_value(value: Any) -> Any:
-    """Recursively convert BSON types to Python-native equivalents for Spark.
+    """Recursively prepare a BSON value for Spark and snake_case nested keys.
 
-    Handles ObjectId -> str, Int64 -> int, Decimal128 -> float, and recurses
-    into nested dicts and lists at any depth.
+    Converts ObjectId -> str, Int64 -> int, Decimal128 -> float, and recurses
+    into nested dicts and lists at any depth. Nested document keys are
+    camelCase -> snake_case renamed so they bind to the snake_case fields of a
+    nested ``StructType``: ``createDataFrame`` matches a dict against a struct
+    by field name, so a Mongo ``{fieldName, fieldValue}`` sub-document would
+    otherwise land as all-null under a ``{field_name, field_value}`` schema.
+    Top-level keys are renamed separately by :func:`_prepare_doc`.
     """
     if isinstance(value, ObjectId):
         return str(value)
@@ -37,7 +42,7 @@ def _sanitize_value(value: Any) -> Any:
     if isinstance(value, Decimal128):
         return float(value.to_decimal())
     if isinstance(value, dict):
-        return {k: _sanitize_value(v) for k, v in value.items()}
+        return {_camel_to_snake(k): _sanitize_value(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_sanitize_value(item) for item in value]
     return value
