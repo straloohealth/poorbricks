@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,9 @@ class RunResult:
     df: DataFrame | None
     rows: int | None = None
     errors: list[str] = field(default_factory=list)
+    # Per-phase wall-clock seconds (spark_init_s, discovery_s, inputs_s,
+    # compute_s, ...) — populated by run() / run_and_persist() for measurement.
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -531,10 +535,14 @@ def run(
         return RunResult(df=None, rows=None, errors=[])
 
     # Build inputs based on mode
+    timings: dict[str, float] = {}
     mongo_uri = os.getenv("MONGO_URI")
+    spark_t0 = time.monotonic()
     spark = _ensure_local_spark()
+    timings["spark_init_s"] = round(time.monotonic() - spark_t0, 3)
     cache: dict[str, DataFrame] = {}
 
+    inputs_t0 = time.monotonic()
     if mode == "fixtures":
         inputs = _build_fixtures_inputs(scenario_key, inputs_cls, scenario_name=None)
     elif mode == "scenario":
@@ -546,7 +554,9 @@ def run(
         # upstream resolves against its producer's level (idempotent).
         from .discovery import discover_all_pipelines
 
+        disc_t0 = time.monotonic()
         discover_all_pipelines()
+        timings["discovery_s"] = round(time.monotonic() - disc_t0, 3)
         inputs = _build_production_inputs(
             spark, inputs_cls, mongo_uri=mongo_uri, cache=cache
         )
@@ -557,8 +567,16 @@ def run(
         inputs = apply_fault(fault_name, inputs)
     else:
         raise AssertionError(f"unhandled mode {mode!r}")
+    # inputs_s is input building only — discovery (production) is reported apart.
+    timings["inputs_s"] = round(
+        time.monotonic() - inputs_t0 - timings.get("discovery_s", 0.0), 3
+    )
 
-    return _execute_pipeline(meta, inputs)
+    compute_t0 = time.monotonic()
+    result = _execute_pipeline(meta, inputs)
+    timings["compute_s"] = round(time.monotonic() - compute_t0, 3)
+    result.timings = timings
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

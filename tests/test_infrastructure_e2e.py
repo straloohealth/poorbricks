@@ -250,6 +250,70 @@ class TestDagGeneration:
         assert "POSTGRES_USER" in dag_source
         assert "POSTGRES_PASSWORD" in dag_source
 
+    def test_dag_pins_spark_master(self, tmp_path: Path) -> None:
+        """Worker pods set SPARK_MASTER to the pod CPU count, not local[*]."""
+        from poorbricks.airflow.dag_generator import generate_dag_file
+
+        wf = self._load_gold_pipeline(tmp_path)
+        dag_source = generate_dag_file(
+            wf,  # type: ignore[arg-type]
+            prefix="test",
+            image="test/image:latest",
+            namespace="test-ns",
+            runtime_secret="test-secret",
+        )
+
+        assert "SPARK_MASTER" in dag_source
+        assert "local[2]" in dag_source
+
+    def test_dag_has_retries(self, tmp_path: Path) -> None:
+        """Generated DAG sets task retries so a killed task re-runs."""
+        from poorbricks.airflow.dag_generator import generate_dag_file
+
+        wf = self._load_gold_pipeline(tmp_path)
+        dag_source = generate_dag_file(
+            wf,  # type: ignore[arg-type]
+            prefix="test",
+            image="test/image:latest",
+            namespace="test-ns",
+            runtime_secret="test-secret",
+        )
+
+        assert "default_args" in dag_source
+        assert "retries" in dag_source
+
+    def test_worker_requests_match_limits(self, tmp_path: Path) -> None:
+        """Worker CPU/memory requests equal limits — node is not overcommitted."""
+        from poorbricks.airflow.dag_generator import generate_dag_file
+
+        wf = self._load_gold_pipeline(tmp_path)
+        dag_source = generate_dag_file(
+            wf,  # type: ignore[arg-type]
+            prefix="test",
+            image="test/image:latest",
+            namespace="test-ns",
+            runtime_secret="test-secret",
+        )
+
+        # Each value appears exactly twice: once under requests, once limits.
+        assert dag_source.count('"cpu": "2"') == 2
+        assert dag_source.count('"memory": "4Gi"') == 2
+
+
+class TestRunnerTimings:
+    """run() records per-phase wall-clock timings so DAG slowness is measurable."""
+
+    def test_run_populates_phase_timings(self) -> None:
+        """A fixtures-mode run attaches non-negative spark/inputs/compute timings."""
+        from poorbricks.runner import run
+
+        result = run("bronze.example.items", mode="fixtures", skip_checks=True)
+
+        assert "spark_init_s" in result.timings
+        assert "inputs_s" in result.timings
+        assert "compute_s" in result.timings
+        assert all(value >= 0 for value in result.timings.values())
+
 
 class TestWorkerPodDagAccess:
     """Verify executor worker pods can access DAGs via PVC.
