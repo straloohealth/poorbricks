@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     contracts_api_url: str = (
         "https://airflow-poorbricks-server-ingress.stingray-ordinal.ts.net"
     )
+    # Salt for hashing PII join keys (e.g. cpf) at the bronze boundary so the
+    # raw value never reaches Postgres. Override via the PII_HASH_SALT env var
+    # in every environment; the default is for local tests only.
+    pii_hash_salt: str = "poorbricks-dev-pii-salt"
     delta_output_dir: str = "artifacts/delta"
     tables_root: Path = Path("tables")
     postgres_host: str = "localhost"
