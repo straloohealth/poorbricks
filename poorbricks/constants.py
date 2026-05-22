@@ -20,7 +20,12 @@ DEFAULT_POSTGRES_HOST = "postgresql-rw.storage.svc.cluster.local"
 DEFAULT_POSTGRES_PORT = "5432"
 DEFAULT_POSTGRES_DB = "poorbricks"
 
+# Base URL of the in-cluster api-server. Worker pod init containers fetch their
+# table code from ``{DEFAULT_CODE_API_URL}/v1/code/{prefix}``.
+DEFAULT_CODE_API_URL = "http://poorbricks-server.airflow.svc.cluster.local:8080"
+
 __all__ = [
+    "DEFAULT_CODE_API_URL",
     "DEFAULT_NAMESPACE",
     "DEFAULT_POSTGRES_CREDS_SECRET_NAME",
     "DEFAULT_POSTGRES_DB",

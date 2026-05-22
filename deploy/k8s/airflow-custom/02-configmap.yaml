@@ -11,9 +11,10 @@ data:
     executor = LocalExecutor
     fernet_key = jO0L0C5rEw0yJ_0zyBQ3_c-2x3E_c5yO5zN8xK2yP0A=
     load_examples = False
-    # Bounded so a single DAG does not flood the one shared DAG node with
-    # worker pods. Raise only alongside more nodes / capacity measurement.
-    max_active_tasks_per_dag = 3
+    # Workers now spread across the Spot node pool instead of one shared DAG
+    # node, so a single DAG can run far more tasks at once. Bounded at 10 —
+    # raise only alongside more nodes / capacity measurement.
+    max_active_tasks_per_dag = 10
 
     [scheduler]
     catchup_by_default = False

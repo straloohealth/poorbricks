@@ -211,8 +211,8 @@ class TestDagGeneration:
 
         assert ">>" in dag_source, "No task dependencies (>>) found in DAG"
 
-    def test_dag_uses_pvc_code_mount(self, tmp_path: Path) -> None:
-        """Verify DAG uses PVC subpath mount for code, not an init container."""
+    def test_dag_fetches_code_via_init_container(self, tmp_path: Path) -> None:
+        """Verify DAG fetches code via a fetch-code init container, not a PVC."""
         from poorbricks.airflow.dag_generator import generate_dag_file
 
         wf = self._load_gold_pipeline(tmp_path)
@@ -224,12 +224,16 @@ class TestDagGeneration:
             runtime_secret="test-secret",
         )
 
-        assert "CODE_PVC_CLAIM" in dag_source, "DAG must reference CODE_PVC_CLAIM"
-        assert "CODE_SUBPATH" in dag_source, "DAG must reference CODE_SUBPATH"
-        assert "__code__/myrepo" in dag_source, "subpath must include prefix"
-        assert "init_containers" not in dag_source, (
-            "DAG must not use init containers for code access (PVC approach)"
+        assert "init_containers=_INIT_CONTAINERS" in dag_source, (
+            "DAG must fetch code via a fetch-code init container"
         )
+        assert "CODE_TARBALL_URL" in dag_source, "DAG must reference CODE_TARBALL_URL"
+        assert "/v1/code/myrepo" in dag_source, "tarball URL must include prefix"
+        # The old RWO-PVC code mount must be gone — that is what pinned workers
+        # to a single node.
+        assert "CODE_PVC_CLAIM" not in dag_source
+        assert "CODE_SUBPATH" not in dag_source
+        assert "V1PersistentVolumeClaimVolumeSource" not in dag_source
 
     def test_dag_includes_postgres_creds_secret(self, tmp_path: Path) -> None:
         """Verify DAG env_from includes the postgres credentials secret."""
@@ -282,9 +286,9 @@ class TestDagGeneration:
         assert "default_args" in dag_source
         assert "retries" in dag_source
 
-    def test_worker_requests_below_limits(self, tmp_path: Path) -> None:
-        """Worker requests are well below limits so pods schedule on the single
-        RWO-PVC-pinned DAG node; the limits still allow a real CPU/memory burst.
+    def test_worker_requests_equal_limits(self, tmp_path: Path) -> None:
+        """Worker requests equal limits: workers run on their own (Spot) nodes,
+        so Kubernetes reserves the real figure and never overcommits a node.
         """
         from poorbricks.airflow.dag_generator import generate_dag_file
 
@@ -297,16 +301,14 @@ class TestDagGeneration:
             runtime_secret="test-secret",
         )
 
-        # Small requests so the pod schedules on the shared, constrained node;
-        # larger limits so a pipeline can still burst.
-        assert '"cpu": "250m"' in dag_source  # request
-        assert '"cpu": "2"' in dag_source  # limit
-        assert '"memory": "1Gi"' in dag_source  # request
-        assert '"memory": "4Gi"' in dag_source  # limit
-        # Request must be strictly below limit — equal would re-create the
-        # "Insufficient cpu" scheduling failure on the single DAG node.
-        assert dag_source.count('"cpu": "2"') == 1
-        assert dag_source.count('"memory": "4Gi"') == 1
+        assert '"cpu": "2"' in dag_source
+        assert '"memory": "4Gi"' in dag_source
+        # requests == limits — the same CPU / memory figure appears in both
+        # the requests block and the limits block.
+        assert dag_source.count('"cpu": "2"') == 2
+        assert dag_source.count('"memory": "4Gi"') == 2
+        # The old below-limit request figures are gone.
+        assert '"cpu": "250m"' not in dag_source
 
 
 class TestRunnerTimings:

@@ -3,16 +3,16 @@
 The generated DAG uses ``KubernetesPodOperator`` for every task. Each
 worker pod:
 
-1. Mounts the shared ``airflow-dags`` PVC at ``/workspace`` with subPath
-   ``__code__/{prefix}/`` — the api-server extracts each uploaded tarball
-   there at upload time, so the worker sees ``/workspace/tables`` and the
-   framework finds pipelines via ``TABLES_ROOT``.
+1. Runs an init container (``python -m poorbricks.airflow.fetch_code``)
+   that downloads the table-repo tarball from the api-server's
+   ``/v1/code/{prefix}`` endpoint into an ``emptyDir`` at ``/workspace`` —
+   so workers need no shared PVC and can run on any node.
 2. Pulls ``MONGO_URI`` / ``POSTGRES_*`` from a ``Secret`` referenced via
    ``env_from``.
 3. Executes ``poorbricks run --pipeline <key> --mode production`` or
    ``poorbricks check --pipeline <key>`` (see ``TaskConfig.command``).
-4. Lands on the node labeled ``poorbricks.io/dags=true`` so the RWO PVC
-   can attach — same node as the scheduler / dag-processor / api-server.
+4. Prefers a Spot VM (soft node-affinity on ``cloud.google.com/gke-spot``
+   plus a toleration for the ``spot`` taint), falling back to on-demand.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import textwrap
 from datetime import datetime
 
 from poorbricks.constants import (
+    DEFAULT_CODE_API_URL,
     DEFAULT_NAMESPACE,
     DEFAULT_POSTGRES_CREDS_SECRET_NAME,
     DEFAULT_RUNTIME_SECRET_NAME,
@@ -31,26 +32,13 @@ from .workflow import TaskConfig, WorkflowConfig
 
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-DEFAULT_CODE_PVC_CLAIM = "airflow-dags"
-DEFAULT_CODE_PVC_ROOT = "__code__"
-DEFAULT_NODE_SELECTOR_KEY = "poorbricks.io/dags"
-DEFAULT_NODE_SELECTOR_VALUE = "true"
-
-# Worker pod CPU *limit* — also the Spark thread count. ``SPARK_MASTER`` is
-# pinned to ``local[_WORKER_CPU]`` so Spark starts exactly this many task
-# threads instead of guessing from cgroups, and the K8s CPU limit caps a burst
-# at the same number.
+# Worker pod CPU / memory — requests equal limits. Worker pods now schedule on
+# their own (Spot) nodes rather than the cramped DAG node, so reserving the
+# real figure is both safe and necessary: it stops Kubernetes overcommitting a
+# node with more bursting pods than it can run. ``SPARK_MASTER`` is pinned to
+# ``local[_WORKER_CPU]`` so Spark starts exactly this many task threads.
 _WORKER_CPU = 2
-
-# Worker pod resource *requests* — deliberately far below the limits. Every
-# worker pod is pinned by the RWO ``airflow-dags`` PVC to one shared node that
-# also runs the Airflow control plane; small requests let pods schedule there
-# even when it is busy, while the limits still let a pipeline burst into real
-# CPU / memory. Requests must NOT equal limits: the single node lacks the
-# headroom to reserve a full ``_WORKER_CPU`` core per pod, so equal
-# requests/limits leave worker pods stuck Pending (``Insufficient cpu``).
-_WORKER_CPU_REQUEST = "250m"
-_WORKER_MEMORY_REQUEST = "1Gi"
+_WORKER_MEMORY = "4Gi"
 
 
 def generate_dag_file(
@@ -61,36 +49,31 @@ def generate_dag_file(
     namespace: str = DEFAULT_NAMESPACE,
     runtime_secret: str = DEFAULT_RUNTIME_SECRET_NAME,
     postgres_creds_secret: str = DEFAULT_POSTGRES_CREDS_SECRET_NAME,
-    code_pvc_claim: str = DEFAULT_CODE_PVC_CLAIM,
-    code_pvc_root: str = DEFAULT_CODE_PVC_ROOT,
-    node_selector: dict[str, str] | None = None,
+    code_api_url: str = DEFAULT_CODE_API_URL,
     start_year: int | None = None,
 ) -> str:
     """Render Python source for an Airflow DAG.
 
     Args:
         workflow: parsed workflow YAML.
-        prefix: namespacing prefix (typically the table-repo name); becomes
-            the subPath under ``code_pvc_root`` on the PVC.
-        image: full image reference for the worker container — must have
-            the framework installed; tables come from the PVC mount.
+        prefix: namespacing prefix (typically the table-repo name); selects
+            the api-server ``/v1/code/{prefix}`` tarball the init container
+            downloads.
+        image: full image reference for the worker container — must have the
+            framework installed; table code is fetched at pod startup.
         namespace: K8s namespace the worker pods run in.
         runtime_secret: K8s ``Secret`` exposed via ``env_from`` (e.g.
             ``MONGO_URI``).
         postgres_creds_secret: K8s ``Secret`` holding VSO-managed postgres
             credentials; keys ``username`` / ``password`` are mapped to
             ``POSTGRES_USER`` / ``POSTGRES_PASSWORD`` in every worker pod.
-        code_pvc_claim: PVC name the api-server wrote extracted tables to.
-        code_pvc_root: directory inside the PVC under which the
-            api-server keeps each ``{prefix}/tables`` tree.
-        node_selector: required ``nodeSelector`` so workers land on the
-            same node as the RWO PVC. Defaults to ``poorbricks.io/dags=true``.
+        code_api_url: base URL of the api-server the init container fetches
+            table code from.
         start_year: ``DAG.start_date`` year override (test hook).
     """
     _validate_prefix(prefix)
     dag_id = f"{prefix}__{workflow.name}"
     year = start_year if start_year is not None else datetime.utcnow().year
-    selector = node_selector or {DEFAULT_NODE_SELECTOR_KEY: DEFAULT_NODE_SELECTOR_VALUE}
 
     parts: list[str] = [
         _render_header(),
@@ -103,9 +86,7 @@ def generate_dag_file(
             image=image,
             runtime_secret=runtime_secret,
             postgres_creds_secret=postgres_creds_secret,
-            code_pvc_claim=code_pvc_claim,
-            code_pvc_root=code_pvc_root,
-            node_selector=selector,
+            code_api_url=code_api_url,
         ),
         _render_dag(),
         _render_volumes_and_env(),
@@ -149,9 +130,7 @@ def _render_constants(
     image: str,
     runtime_secret: str,
     postgres_creds_secret: str,
-    code_pvc_claim: str,
-    code_pvc_root: str,
-    node_selector: dict[str, str],
+    code_api_url: str,
 ) -> str:
     return (
         f"DAG_ID = {dag_id!r}\n"
@@ -162,9 +141,7 @@ def _render_constants(
         f"IMAGE = {image!r}\n"
         f"RUNTIME_SECRET = {runtime_secret!r}\n"
         f"POSTGRES_CREDS_SECRET = {postgres_creds_secret!r}\n"
-        f"CODE_PVC_CLAIM = {code_pvc_claim!r}\n"
-        f"CODE_SUBPATH = {f'{code_pvc_root}/{prefix}'!r}\n"
-        f"NODE_SELECTOR = {dict(node_selector)!r}\n"
+        f"CODE_TARBALL_URL = {f'{code_api_url}/v1/code/{prefix}'!r}\n"
     )
 
 
@@ -191,19 +168,16 @@ def _render_dag() -> str:
 def _render_volumes_and_env() -> str:
     rendered = textwrap.dedent(
         """\
+        # Table code is fetched at startup by the fetch-code init container
+        # into this emptyDir — no shared PVC, so the pod runs on any node.
         _CODE_VOLUME = k8s.V1Volume(
             name="code",
-            persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
-                claim_name=CODE_PVC_CLAIM,
-                read_only=True,
-            ),
+            empty_dir=k8s.V1EmptyDirVolumeSource(),
         )
 
         _CODE_MOUNT = k8s.V1VolumeMount(
             name="code",
             mount_path="/workspace",
-            sub_path=CODE_SUBPATH,
-            read_only=True,
         )
 
         # Scratch disk for Spark shuffle / sort / spill — lets pipelines
@@ -220,6 +194,51 @@ def _render_volumes_and_env() -> str:
 
         _VOLUMES = [_CODE_VOLUME, _SCRATCH_VOLUME]
 
+        # Init container: download the table-repo tarball from the api-server
+        # into /workspace before the worker starts. Reuses the worker image
+        # (already IfNotPresent-cached) so there is no extra image pull.
+        _INIT_CONTAINERS = [
+            k8s.V1Container(
+                name="fetch-code",
+                image=IMAGE,
+                command=["python", "-m", "poorbricks.airflow.fetch_code"],
+                env=[
+                    k8s.V1EnvVar(name="CODE_TARBALL_URL", value=CODE_TARBALL_URL),
+                ],
+                volume_mounts=[_CODE_MOUNT],
+            )
+        ]
+
+        # Prefer a Spot VM (soft — falls back to on-demand) and tolerate the
+        # Spot taint so the pod is allowed onto the spot node pool.
+        _AFFINITY = k8s.V1Affinity(
+            node_affinity=k8s.V1NodeAffinity(
+                preferred_during_scheduling_ignored_during_execution=[
+                    k8s.V1PreferredSchedulingTerm(
+                        weight=100,
+                        preference=k8s.V1NodeSelectorTerm(
+                            match_expressions=[
+                                k8s.V1NodeSelectorRequirement(
+                                    key="cloud.google.com/gke-spot",
+                                    operator="In",
+                                    values=["true"],
+                                )
+                            ]
+                        ),
+                    )
+                ]
+            )
+        )
+
+        _TOLERATIONS = [
+            k8s.V1Toleration(
+                key="spot",
+                operator="Equal",
+                value="true",
+                effect="NoSchedule",
+            )
+        ]
+
         _ENV_FROM = [
             k8s.V1EnvFromSource(
                 secret_ref=k8s.V1SecretEnvSource(name=RUNTIME_SECRET),
@@ -229,18 +248,18 @@ def _render_volumes_and_env() -> str:
             ),
         ]
 
-        # Requests are deliberately small so worker pods schedule onto the
-        # single (RWO-PVC-pinned, shared) DAG node even when it is busy; the
-        # limits still let a pipeline burst into real CPU / memory.
+        # Requests equal limits for CPU / memory: worker pods run on their own
+        # (Spot) nodes, so Kubernetes schedules only as many as a node can
+        # truly run — each gets its full CPU / memory with no throttling.
         _WORKER_RESOURCES = k8s.V1ResourceRequirements(
             requests={
-                "cpu": "__WCPU_REQ__",
-                "memory": "__WMEM_REQ__",
+                "cpu": "__WORKER_CPU__",
+                "memory": "__WORKER_MEMORY__",
                 "ephemeral-storage": "1Gi",
             },
             limits={
-                "cpu": "__WCPU_LIMIT__",
-                "memory": "4Gi",
+                "cpu": "__WORKER_CPU__",
+                "memory": "__WORKER_MEMORY__",
                 "ephemeral-storage": "20Gi",
             },
         )
@@ -252,7 +271,7 @@ def _render_volumes_and_env() -> str:
             k8s.V1EnvVar(name="SPARK_LOCAL_DIR", value="/spark-tmp"),
             # Pin Spark to the pod's CPU limit so it starts exactly that many
             # local task threads instead of guessing from cgroups.
-            k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WCPU_LIMIT__]"),
+            k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WORKER_CPU__]"),
             k8s.V1EnvVar(
                 name="POSTGRES_USER",
                 value_from=k8s.V1EnvVarSource(
@@ -283,12 +302,8 @@ def _render_volumes_and_env() -> str:
         ]
         """
     )
-    # __WCPU_REQ__ before __WCPU_LIMIT__ — neither token is a substring of the
-    # other, so order is not load-bearing, but keep requests first for clarity.
-    return (
-        rendered.replace("__WCPU_REQ__", _WORKER_CPU_REQUEST)
-        .replace("__WMEM_REQ__", _WORKER_MEMORY_REQUEST)
-        .replace("__WCPU_LIMIT__", str(_WORKER_CPU))
+    return rendered.replace("__WORKER_CPU__", str(_WORKER_CPU)).replace(
+        "__WORKER_MEMORY__", _WORKER_MEMORY
     )
 
 
@@ -315,10 +330,12 @@ def _render_build_task() -> str:
                 arguments=arguments,
                 volumes=_VOLUMES,
                 volume_mounts=[_CODE_MOUNT, _SCRATCH_MOUNT],
+                init_containers=_INIT_CONTAINERS,
                 env_from=_ENV_FROM,
                 env_vars=_ENV_VARS,
                 container_resources=_WORKER_RESOURCES,
-                node_selector=NODE_SELECTOR,
+                affinity=_AFFINITY,
+                tolerations=_TOLERATIONS,
                 get_logs=True,
                 in_cluster=True,
                 on_finish_action="delete_pod",
@@ -327,8 +344,8 @@ def _render_build_task() -> str:
                 # The image tag is an immutable git SHA, so skip the re-pull of
                 # the multi-GB image on every task — pods start far faster.
                 image_pull_policy="IfNotPresent",
-                # All worker pods are pinned (RWO PVC) to one shared node, so a
-                # pod may sit Pending while siblings finish; wait, don't fail.
+                # A pod may sit Pending while the cluster autoscaler adds a
+                # node or siblings finish; wait for a slot, don't fail.
                 startup_timeout_seconds=900,
                 dag=dag,
             )
