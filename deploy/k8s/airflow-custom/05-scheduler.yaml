@@ -60,12 +60,13 @@ spec:
         - name: AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT
           value: "180"
         # Worker pods now spread across the Spot node pool rather than being
-        # pinned to one shared DAG node, so the scheduler can run far more
-        # tasks at once. Bounded at 10 — raise alongside more nodes / measurement.
+        # pinned to one shared DAG node, and use request<limit so ~7 worker
+        # pods fit per Spot node. Bounded at 15 to use that headroom without
+        # overrunning the Spot autoscaler.
         - name: AIRFLOW__CORE__PARALLELISM
-          value: "10"
+          value: "15"
         - name: AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG
-          value: "10"
+          value: "15"
         ports:
         - containerPort: 8793
           name: scheduler

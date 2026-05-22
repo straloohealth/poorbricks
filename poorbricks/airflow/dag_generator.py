@@ -32,13 +32,18 @@ from .workflow import TaskConfig, WorkflowConfig
 
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-# Worker pod CPU / memory — requests equal limits. Worker pods now schedule on
-# their own (Spot) nodes rather than the cramped DAG node, so reserving the
-# real figure is both safe and necessary: it stops Kubernetes overcommitting a
-# node with more bursting pods than it can run. ``SPARK_MASTER`` is pinned to
-# ``local[_WORKER_CPU]`` so Spark starts exactly this many task threads.
-_WORKER_CPU = 2
-_WORKER_MEMORY = "4Gi"
+# Worker pod CPU / memory — request reflects *measured average* load, limit
+# allows burst. Observed worker pods sit at ~0.2–1.0 CPU during Spark init /
+# Mongo read and 1.5–2.0 CPU during compute (time-weighted ~1 CPU); memory is
+# typically ~0.8 Gi but a few pipelines hit 3 Gi+. Requesting the average
+# instead of the peak lets ~7 pods pack onto a Spot node (request-bound) while
+# each can still burst to the limit when the node has slack.
+# ``SPARK_MASTER`` is pinned to ``local[_WORKER_CPU_LIMIT]`` so Spark starts as
+# many threads as the pod is allowed to use under burst.
+_WORKER_CPU_REQUEST = "1"
+_WORKER_CPU_LIMIT = "4"
+_WORKER_MEMORY_REQUEST = "2Gi"
+_WORKER_MEMORY_LIMIT = "8Gi"
 
 
 def generate_dag_file(
@@ -248,18 +253,21 @@ def _render_volumes_and_env() -> str:
             ),
         ]
 
-        # Requests equal limits for CPU / memory: worker pods run on their own
-        # (Spot) nodes, so Kubernetes schedules only as many as a node can
-        # truly run — each gets its full CPU / memory with no throttling.
+        # Request reflects average measured load; the limit allows burst. The
+        # node packs pods by request, so ~7 pods fit per Spot node (e2-custom-8,
+        # 7.5 allocatable CPU); each can still burst toward the limit when the
+        # node has slack. Under simultaneous-compute pressure CFS throttles
+        # each pod toward its request — Spark gets slower, not broken, and the
+        # task retries already cover any flakiness.
         _WORKER_RESOURCES = k8s.V1ResourceRequirements(
             requests={
-                "cpu": "__WORKER_CPU__",
-                "memory": "__WORKER_MEMORY__",
+                "cpu": "__WORKER_CPU_REQUEST__",
+                "memory": "__WORKER_MEMORY_REQUEST__",
                 "ephemeral-storage": "1Gi",
             },
             limits={
-                "cpu": "__WORKER_CPU__",
-                "memory": "__WORKER_MEMORY__",
+                "cpu": "__WORKER_CPU_LIMIT__",
+                "memory": "__WORKER_MEMORY_LIMIT__",
                 "ephemeral-storage": "20Gi",
             },
         )
@@ -269,9 +277,10 @@ def _render_volumes_and_env() -> str:
             k8s.V1EnvVar(name="PYTHONPATH", value="/workspace:/app"),
             k8s.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
             k8s.V1EnvVar(name="SPARK_LOCAL_DIR", value="/spark-tmp"),
-            # Pin Spark to the pod's CPU limit so it starts exactly that many
-            # local task threads instead of guessing from cgroups.
-            k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WORKER_CPU__]"),
+            # Pin Spark to the pod's CPU *limit* so it starts as many local
+            # task threads as the pod is allowed to burst to (instead of
+            # guessing from cgroups). Under contention CFS throttles them.
+            k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WORKER_CPU_LIMIT__]"),
             k8s.V1EnvVar(
                 name="POSTGRES_USER",
                 value_from=k8s.V1EnvVarSource(
@@ -302,8 +311,11 @@ def _render_volumes_and_env() -> str:
         ]
         """
     )
-    return rendered.replace("__WORKER_CPU__", str(_WORKER_CPU)).replace(
-        "__WORKER_MEMORY__", _WORKER_MEMORY
+    return (
+        rendered.replace("__WORKER_CPU_REQUEST__", _WORKER_CPU_REQUEST)
+        .replace("__WORKER_CPU_LIMIT__", _WORKER_CPU_LIMIT)
+        .replace("__WORKER_MEMORY_REQUEST__", _WORKER_MEMORY_REQUEST)
+        .replace("__WORKER_MEMORY_LIMIT__", _WORKER_MEMORY_LIMIT)
     )
 
 
