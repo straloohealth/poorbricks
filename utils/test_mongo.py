@@ -87,6 +87,26 @@ class TestPrepareDoc:
         result = _prepare_doc(doc, "mongo_id", ["mongo_id", "full_name", "score"])
         assert result == (str(oid), "Ada", None)
 
+    def test_nested_subdocument_keys_are_snake_cased(self) -> None:
+        """A camelCase array-of-struct (e.g. extraFields) is renamed per element
+        so it binds to a snake_case nested StructType."""
+        oid = ObjectId()
+        doc = {
+            "_id": oid,
+            "extraFields": [
+                {"fieldName": "Cargo", "fieldValue": "Dev"},
+                {"fieldName": "Unidade"},
+            ],
+        }
+        result = _prepare_doc(doc, "mongo_id", ["mongo_id", "extra_fields"])
+        assert result == (
+            str(oid),
+            [
+                {"field_name": "Cargo", "field_value": "Dev"},
+                {"field_name": "Unidade"},
+            ],
+        )
+
 
 @pytest.fixture
 def mongo_db() -> Iterator[Any]:

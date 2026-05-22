@@ -43,6 +43,22 @@ def _sanitize_value(value: Any) -> Any:
     return value
 
 
+def _snake_case_keys(value: Any) -> Any:
+    """Recursively camelCase -> snake_case every dict key at any depth.
+
+    ``createDataFrame`` binds a dict to a ``StructType`` by field name, so a
+    nested Mongo sub-document (e.g. ``extraFields[].fieldName``) must have
+    snake_case keys to populate a snake_case nested struct — otherwise it
+    lands as all-null. Applied only inside the Mongo reader, never to the
+    schema-inference path which intentionally preserves native key casing.
+    """
+    if isinstance(value, dict):
+        return {_camel_to_snake(k): _snake_case_keys(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_snake_case_keys(item) for item in value]
+    return value
+
+
 def _resolve_id_field(schema: StructType) -> str | None:
     """Find the schema field that should receive MongoDB's ``_id`` value.
 
@@ -68,8 +84,9 @@ def _prepare_doc(
     """Map one raw MongoDB document to a schema-ordered tuple.
 
     Applies the ``_id`` -> ``id_field`` rename, camelCase -> snake_case key
-    renames (only when the snake form is a schema field), and BSON-type
-    sanitisation. Returns values ordered to match ``field_names``.
+    renames (top-level when the snake form is a schema field, and recursively
+    inside every nested sub-document), and BSON-type sanitisation. Returns
+    values ordered to match ``field_names``.
     """
     field_set = set(field_names)
     mapped: dict[str, Any] = {}
@@ -82,7 +99,9 @@ def _prepare_doc(
             mapped[snake] = value
         else:
             mapped[key] = value
-    return tuple(_sanitize_value(mapped.get(name)) for name in field_names)
+    return tuple(
+        _sanitize_value(_snake_case_keys(mapped.get(name))) for name in field_names
+    )
 
 
 def _resolve_partition_bounds(
