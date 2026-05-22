@@ -62,8 +62,7 @@ def test_generated_dag_references_keys() -> None:
     assert "production" in source
     assert "_WORKER_RESOURCES" in source
     assert "container_resources=_WORKER_RESOURCES" in source
-    assert '"1Gi"' in source  # worker memory request
-    assert '"4Gi"' in source  # worker memory limit
+    assert '"memory": "4Gi"' in source  # worker memory (request == limit)
     assert "startup_timeout_seconds=900" in source
 
 
@@ -101,7 +100,9 @@ def test_check_command_renders_check_arguments() -> None:
     assert "task_patients >> task_verify" in source
 
 
-def test_pvc_volume_and_subpath_present() -> None:
+def test_code_fetched_via_init_container() -> None:
+    """Workers fetch table code through a fetch-code init container into an
+    emptyDir — no shared PVC mount, so the pod can run on any node."""
     wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
     source = generate_dag_file(
         wf,
@@ -109,26 +110,54 @@ def test_pvc_volume_and_subpath_present() -> None:
         image="img",
     )
     ast.parse(source)
-    assert "V1PersistentVolumeClaimVolumeSource" in source
-    assert "airflow-dags" in source
-    assert "'__code__/my-prefix'" in source
+    # The init container downloads the code tarball before the worker starts.
+    assert "_INIT_CONTAINERS" in source
+    assert "init_containers=_INIT_CONTAINERS" in source
+    assert "fetch-code" in source
+    assert "poorbricks.airflow.fetch_code" in source
+    assert "CODE_TARBALL_URL" in source
+    assert "/v1/code/my-prefix" in source
+    # Code lands in an emptyDir, never a PVC — so no node pinning is needed.
+    assert "V1EmptyDirVolumeSource" in source
+    assert "V1PersistentVolumeClaimVolumeSource" not in source
     assert "/workspace" in source
     assert "TABLES_ROOT" in source
-    assert "poorbricks.io/dags" in source
     # The old git init container must be gone.
     assert "git clone" not in source
     assert "alpine/git" not in source
 
 
-def test_custom_node_selector_propagates() -> None:
+def test_workers_prefer_spot() -> None:
+    """Worker pods carry soft affinity for Spot nodes and tolerate the Spot
+    taint, so they prefer preemptible VMs but fall back to on-demand."""
     wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
     source = generate_dag_file(
         wf,
         prefix="r",
         image="img",
-        node_selector={"role": "etl"},
     )
-    assert "'role': 'etl'" in source
+    ast.parse(source)
+    # Soft (preferred, not required) node affinity on the GKE Spot label.
+    assert "affinity=_AFFINITY" in source
+    assert "preferred_during_scheduling_ignored_during_execution" in source
+    assert "cloud.google.com/gke-spot" in source
+    # Toleration for the spot taint so the pod is admitted onto the pool.
+    assert "tolerations=_TOLERATIONS" in source
+    assert "V1Toleration" in source
+
+
+def test_no_node_selector() -> None:
+    """Workers no longer pin to the poorbricks.io/dags node — that pinning
+    only existed so the RWO code PVC could attach."""
+    wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
+    source = generate_dag_file(
+        wf,
+        prefix="r",
+        image="img",
+    )
+    assert "node_selector" not in source
+    assert "NODE_SELECTOR" not in source
+    assert "poorbricks.io/dags" not in source
 
 
 def test_invalid_prefix_rejected() -> None:

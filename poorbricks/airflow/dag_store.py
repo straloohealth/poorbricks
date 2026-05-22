@@ -27,8 +27,18 @@ class DagStore(Protocol):
     def put(self, prefix: str, name: str, content: str) -> None:
         """Write ``<prefix>/<name>.py`` with the given source."""
 
+    def list_prefixes(self) -> list[str]:
+        """Return every prefix that currently holds stored DAG files, sorted.
+
+        Excludes the ``__code__`` code tree and dotdir staging directories
+        ``_publish_code_to_pvc`` keeps alongside the per-prefix DAG folders.
+        """
+
     def list_dags(self, prefix: str) -> list[str]:
         """Return the names (without ``.py``) currently stored under ``prefix``."""
+
+    def get(self, prefix: str, name: str) -> str:
+        """Return the source of the stored DAG ``<prefix>/<name>.py``."""
 
     def prune(self, prefix: str, keep: set[str]) -> list[str]:
         """Delete every DAG under ``prefix`` whose name is not in ``keep``.
@@ -52,11 +62,23 @@ class LocalDagStore:
         target_dir.mkdir(parents=True, exist_ok=True)
         (target_dir / f"{name}.py").write_text(content)
 
+    def list_prefixes(self) -> list[str]:
+        if not self.root.exists():
+            return []
+        return sorted(
+            p.name
+            for p in self.root.iterdir()
+            if p.is_dir() and p.name != "__code__" and not p.name.startswith(".")
+        )
+
     def list_dags(self, prefix: str) -> list[str]:
         target_dir = self._prefix_dir(prefix)
         if not target_dir.exists():
             return []
         return sorted(p.stem for p in target_dir.glob("*.py"))
+
+    def get(self, prefix: str, name: str) -> str:
+        return (self._prefix_dir(prefix) / f"{name}.py").read_text()
 
     def prune(self, prefix: str, keep: set[str]) -> list[str]:
         target_dir = self._prefix_dir(prefix)

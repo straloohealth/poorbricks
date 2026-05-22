@@ -16,6 +16,7 @@ Tailscale HTTP proxy.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sys
@@ -29,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
@@ -40,6 +41,7 @@ from poorbricks.airflow import (
     generate_dag_file,
     load_workflows,
 )
+from poorbricks.airflow.dag_parser import parse_generated_dag
 from poorbricks.airflow.dag_store import DagStore
 
 from .config import ApiSettings, settings
@@ -191,6 +193,53 @@ async def upload(
         _upload_lock.release()
     status_code = 200 if result.get("ok") else 422
     return JSONResponse(result, status_code=status_code)
+
+
+@app.get("/v1/code/{prefix}")
+async def get_code(prefix: str) -> Response:
+    """Stream the table-code tarball a worker init container downloads.
+
+    Serves the ``tables/`` tree ``_publish_code_to_pvc`` persisted at
+    ``{dags_dir}/{code_pvc_root}/{prefix}/tables`` as a gzip tarball, so a
+    worker pod fetches its code over HTTP instead of mounting the RWO PVC.
+    """
+    _validate_prefix(prefix)
+    code_dir = Path(settings.dags_dir) / settings.code_pvc_root / prefix / "tables"
+    if not code_dir.is_dir():
+        raise HTTPException(
+            status_code=404, detail=f"no code published for prefix {prefix!r}"
+        )
+    try:
+        payload = await run_in_threadpool(_build_code_tarball, code_dir)
+    except FileNotFoundError:
+        # _publish_code_to_pvc swaps the tree via os.rename; a request landing
+        # in that sub-millisecond gap sees the directory vanish mid-tar.
+        raise HTTPException(
+            status_code=404, detail=f"no code published for prefix {prefix!r}"
+        )
+    return Response(content=payload, media_type="application/gzip")
+
+
+@app.post("/v1/regenerate")
+async def regenerate() -> JSONResponse:
+    """Re-render every stored DAG in place with the current dag_generator.
+
+    Migrates already-uploaded DAGs onto a new worker pod spec without
+    re-uploading any table repo: each stored DAG already carries its full
+    task graph, so it is parsed back to a workflow and re-rendered. A DAG that
+    fails to parse or render is reported under ``failed`` and left untouched,
+    so one bad DAG never aborts the batch.
+    """
+    if not _upload_lock.acquire(blocking=False):
+        return JSONResponse(
+            {"ok": False, "message": "server busy: another upload is in progress"},
+            status_code=503,
+        )
+    try:
+        result = await run_in_threadpool(_regenerate_all, settings)
+    finally:
+        _upload_lock.release()
+    return JSONResponse(result)
 
 
 def _validate_prefix(prefix: str) -> None:
@@ -351,8 +400,6 @@ def _handle_upload(
                 image=wf.image or cfg.worker_image,
                 namespace=cfg.worker_namespace,
                 runtime_secret=cfg.runtime_secret_name,
-                code_pvc_claim=cfg.code_pvc_claim,
-                code_pvc_root=cfg.code_pvc_root,
             )
             dag_store.put(prefix, wf.name, content)
             dag_names.append(wf.name)
@@ -374,18 +421,64 @@ def _build_store(cfg: ApiSettings) -> DagStore:
     return LocalDagStore(root=Path(cfg.dags_dir))
 
 
+def _build_code_tarball(code_dir: Path) -> bytes:
+    """Tar + gzip ``code_dir`` into memory, rooted at ``tables/``."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(code_dir, arcname="tables")
+    return buf.getvalue()
+
+
+def _regenerate_all(cfg: ApiSettings) -> dict[str, Any]:
+    """Re-render every stored DAG in place; one bad DAG never aborts the batch."""
+    dag_store = _build_store(cfg)
+    regenerated: list[str] = []
+    failed: list[dict[str, str]] = []
+    for prefix in dag_store.list_prefixes():
+        for name in dag_store.list_dags(prefix):
+            dag_ref = f"{prefix}/{name}"
+            try:
+                parsed = parse_generated_dag(dag_store.get(prefix, name))
+                workflow = WorkflowConfig(
+                    name=name,
+                    schedule=parsed.schedule,
+                    tasks=parsed.tasks,
+                )
+                content = generate_dag_file(
+                    workflow,
+                    prefix=prefix,
+                    image=parsed.image,
+                    namespace=parsed.namespace,
+                    runtime_secret=parsed.runtime_secret,
+                    postgres_creds_secret=parsed.postgres_creds_secret,
+                    start_year=parsed.start_year,
+                )
+                dag_store.put(prefix, name, content)
+                regenerated.append(dag_ref)
+            except Exception as exc:  # noqa: BLE001 — record + skip one bad DAG
+                failed.append({"dag": dag_ref, "error": str(exc)})
+    return {
+        "ok": True,
+        "regenerated": sorted(regenerated),
+        "failed": failed,
+        "count": len(regenerated),
+    }
+
+
 def _publish_code_to_pvc(
     *, tables_dir: Path, dags_dir: Path, code_root: str, prefix: str
 ) -> None:
     """Atomically swap the extracted ``tables/`` tree into
     ``{dags_dir}/{code_root}/{prefix}/tables``.
 
-    Worker pods mount the same PVC at ``/workspace`` with the per-prefix
-    subPath, so this is the only code-distribution mechanism workers need.
+    Worker pods no longer mount this PVC: the api-server serves the tree
+    back to their ``fetch-code`` init containers via ``GET /v1/code/{prefix}``.
+    The persisted tree is also what ``POST /v1/regenerate`` relies on staying
+    available between uploads.
 
     The swap is done via ``os.rename`` of two sibling directories under the
-    same code_root so any worker pod starting mid-upload sees either the
-    old code or the new code — never a half-written tree.
+    same code_root so any reader landing mid-upload sees either the old code
+    or the new code — never a half-written tree.
     """
     import os
     import shutil
@@ -409,8 +502,6 @@ def _publish_code_to_pvc(
 
 def _extract_safely(payload: bytes, dest: Path) -> None:
     """Extract a tarball, rejecting any path that escapes ``dest``."""
-    import io
-
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as tar:
         for member in tar.getmembers():
             target = (dest / member.name).resolve()
