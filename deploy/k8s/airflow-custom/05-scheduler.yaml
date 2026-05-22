@@ -59,8 +59,9 @@ spec:
           value: "180"
         - name: AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT
           value: "180"
-        # Capped to what one node can run un-throttled: each worker pod
-        # requests cpu=2/mem=4Gi, so ~3 fit alongside the control plane.
+        # Bounded so the scheduler does not flood the one shared DAG node
+        # (worker pods are pinned there by the RWO dags PVC) with more pods
+        # than it can run. Raise only alongside more nodes / measurement.
         - name: AIRFLOW__CORE__PARALLELISM
           value: "3"
         - name: AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG
