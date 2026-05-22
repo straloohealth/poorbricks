@@ -301,7 +301,13 @@ def _jdbc_partition_options(
     safe single-partition read) when no suitable column exists or the table is
     empty / single-valued.
     """
-    from pyspark.sql.types import StructType
+    from pyspark.sql.types import (
+        DateType,
+        IntegerType,
+        LongType,
+        StructType,
+        TimestampType,
+    )
 
     if not schema_json:
         return {}
@@ -310,16 +316,18 @@ def _jdbc_partition_options(
     except Exception:
         return {}
 
+    # Match the field's actual top-level type with isinstance — never a
+    # substring of str(dataType), which would also match a nested
+    # struct/array column whose repr merely contains "TimestampType" and
+    # make Spark's JDBC reader reject it ("partition column ... string found").
     column: str | None = None
     for schema_field in schema.fields:
-        type_str = str(schema_field.dataType)
-        if "TimestampType" in type_str or "DateType" in type_str:
+        if isinstance(schema_field.dataType, (TimestampType, DateType)):
             column = schema_field.name
             break
     if column is None:
         for schema_field in schema.fields:
-            type_str = str(schema_field.dataType)
-            if "LongType" in type_str or "IntegerType" in type_str:
+            if isinstance(schema_field.dataType, (LongType, IntegerType)):
                 column = schema_field.name
                 break
     if column is None:
