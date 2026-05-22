@@ -36,6 +36,13 @@ DEFAULT_CODE_PVC_ROOT = "__code__"
 DEFAULT_NODE_SELECTOR_KEY = "poorbricks.io/dags"
 DEFAULT_NODE_SELECTOR_VALUE = "true"
 
+# Worker pod CPU — single source of truth shared by the K8s resource block and
+# the Spark master string. The resource request equals the limit (see
+# ``_render_volumes_and_env``) so the node is never oversubscribed, and
+# ``SPARK_MASTER`` is pinned to ``local[_WORKER_CPU]`` so Spark starts exactly
+# this many task threads instead of guessing from cgroups.
+_WORKER_CPU = 2
+
 
 def generate_dag_file(
     workflow: WorkflowConfig,
@@ -112,7 +119,7 @@ def _render_header() -> str:
 
         from __future__ import annotations
 
-        from datetime import datetime
+        from datetime import datetime, timedelta
 
         from airflow import DAG
         from airflow.providers.cncf.kubernetes.operators.pod import (
@@ -161,6 +168,10 @@ def _render_dag() -> str:
             start_date=START_DATE,
             catchup=False,
             max_active_runs=1,
+            # Retry tasks killed by transient node pressure so a single
+            # failure does not fail the whole run; pipelines write
+            # idempotently to Postgres.
+            default_args={"retries": 2, "retry_delay": timedelta(minutes=2)},
             tags=[PREFIX, "poorbricks"],
             is_paused_upon_creation=False,
         )
@@ -169,7 +180,7 @@ def _render_dag() -> str:
 
 
 def _render_volumes_and_env() -> str:
-    return textwrap.dedent(
+    rendered = textwrap.dedent(
         """\
         _CODE_VOLUME = k8s.V1Volume(
             name="code",
@@ -209,12 +220,21 @@ def _render_volumes_and_env() -> str:
             ),
         ]
 
-        # Requests are deliberately small so worker pods schedule onto the
-        # single (RWO-PVC-pinned, shared) DAG node even when it is busy; the
-        # limits still let a pipeline burst into real CPU / memory.
+        # Requests equal limits for CPU / memory so Kubernetes schedules only
+        # as many workers as the node can truly run: each running pod then gets
+        # its full CPU / memory with no throttling, instead of many pods
+        # thrashing one oversubscribed node.
         _WORKER_RESOURCES = k8s.V1ResourceRequirements(
-            requests={"cpu": "250m", "memory": "1Gi", "ephemeral-storage": "1Gi"},
-            limits={"cpu": "2", "memory": "4Gi", "ephemeral-storage": "20Gi"},
+            requests={
+                "cpu": "__WORKER_CPU__",
+                "memory": "4Gi",
+                "ephemeral-storage": "1Gi",
+            },
+            limits={
+                "cpu": "__WORKER_CPU__",
+                "memory": "4Gi",
+                "ephemeral-storage": "20Gi",
+            },
         )
 
         _ENV_VARS = [
@@ -222,6 +242,9 @@ def _render_volumes_and_env() -> str:
             k8s.V1EnvVar(name="PYTHONPATH", value="/workspace:/app"),
             k8s.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
             k8s.V1EnvVar(name="SPARK_LOCAL_DIR", value="/spark-tmp"),
+            # Pin Spark to the pod's CPU limit so it starts exactly that many
+            # local task threads instead of guessing from cgroups.
+            k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WORKER_CPU__]"),
             k8s.V1EnvVar(
                 name="POSTGRES_USER",
                 value_from=k8s.V1EnvVarSource(
@@ -252,6 +275,7 @@ def _render_volumes_and_env() -> str:
         ]
         """
     )
+    return rendered.replace("__WORKER_CPU__", str(_WORKER_CPU))
 
 
 def _render_build_task() -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from .inputs import Inputs
@@ -123,6 +124,16 @@ def _serialize_fixtures(meta: PipelineMeta) -> list[dict[str, Any]]:
     return fixtures
 
 
+def _log_run_timings(pipeline_key: str, mode: str, timings: dict[str, float]) -> None:
+    """Emit one structured timing line per run so DAG slowness is measurable.
+
+    Printed to stdout (not the logger) so it always lands in worker pod logs
+    captured by the KubernetesPodOperator, alongside the CLI's other output.
+    """
+    fields = " ".join(f"{key}={value}" for key, value in timings.items())
+    print(f"[timing] pipeline={pipeline_key} mode={mode} {fields}", flush=True)
+
+
 def run_and_persist(
     pipeline_key: str,
     mode: str = "fixtures",
@@ -132,6 +143,7 @@ def run_and_persist(
 
     Arch and contract-source checks are enforced by run() — not repeated here.
     """
+    total_t0 = time.monotonic()
     result = run(pipeline_key, mode, scenario_name)
     if result.df is None:
         return result
@@ -154,7 +166,9 @@ def run_and_persist(
 
         loader = PostgresLoader()
         pg_table = _pg_table_name(meta.table_name)
+        write_t0 = time.monotonic()
         result.rows = loader.write(result.df, meta.level, pg_table)
+        result.timings["write_s"] = round(time.monotonic() - write_t0, 3)
         profile = loader.profile_table(meta.level, pg_table, schema)
     else:
         profile = profile_dataframe(result.df)
@@ -175,6 +189,7 @@ def run_and_persist(
         except Exception:
             example_rows = []
 
+    contract_t0 = time.monotonic()
     push_contract(
         table_name=meta.table_name,
         schema=schema,
@@ -191,7 +206,10 @@ def run_and_persist(
         inputs=_serialize_inputs(meta.inputs_cls),
         fixtures=_serialize_fixtures(meta),
     )
+    result.timings["contract_s"] = round(time.monotonic() - contract_t0, 3)
 
+    result.timings["total_s"] = round(time.monotonic() - total_t0, 3)
+    _log_run_timings(pipeline_key, mode, result.timings)
     return result
 
 

@@ -59,10 +59,12 @@ spec:
           value: "180"
         - name: AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT
           value: "180"
+        # Capped to what one node can run un-throttled: each worker pod
+        # requests cpu=2/mem=4Gi, so ~3 fit alongside the control plane.
         - name: AIRFLOW__CORE__PARALLELISM
-          value: "4"
+          value: "3"
         - name: AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG
-          value: "4"
+          value: "3"
         ports:
         - containerPort: 8793
           name: scheduler
