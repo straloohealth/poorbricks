@@ -12,9 +12,9 @@ data:
     fernet_key = jO0L0C5rEw0yJ_0zyBQ3_c-2x3E_c5yO5zN8xK2yP0A=
     load_examples = False
     # Workers now spread across the Spot node pool instead of one shared DAG
-    # node, so a single DAG can run far more tasks at once. Bounded at 10 —
-    # raise only alongside more nodes / capacity measurement.
-    max_active_tasks_per_dag = 10
+    # node, and use request<limit so ~7 worker pods fit per Spot node. Bounded
+    # at 15 to use the headroom without overrunning the Spot autoscaler.
+    max_active_tasks_per_dag = 15
 
     [scheduler]
     catchup_by_default = False

@@ -62,7 +62,8 @@ def test_generated_dag_references_keys() -> None:
     assert "production" in source
     assert "_WORKER_RESOURCES" in source
     assert "container_resources=_WORKER_RESOURCES" in source
-    assert '"memory": "4Gi"' in source  # worker memory (request == limit)
+    assert '"memory": "2Gi"' in source  # worker memory request
+    assert '"memory": "8Gi"' in source  # worker memory limit
     assert "startup_timeout_seconds=900" in source
 
 

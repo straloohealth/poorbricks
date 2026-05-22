@@ -268,7 +268,7 @@ class TestDagGeneration:
         )
 
         assert "SPARK_MASTER" in dag_source
-        assert "local[2]" in dag_source
+        assert "local[4]" in dag_source  # matches the CPU limit (burst ceiling)
 
     def test_dag_has_retries(self, tmp_path: Path) -> None:
         """Generated DAG sets task retries so a killed task re-runs."""
@@ -286,9 +286,10 @@ class TestDagGeneration:
         assert "default_args" in dag_source
         assert "retries" in dag_source
 
-    def test_worker_requests_equal_limits(self, tmp_path: Path) -> None:
-        """Worker requests equal limits: workers run on their own (Spot) nodes,
-        so Kubernetes reserves the real figure and never overcommits a node.
+    def test_worker_request_below_limit(self, tmp_path: Path) -> None:
+        """Worker requests reflect measured average load and are below the
+        burst limits: the node packs pods by request (high density) while each
+        pod can still burst to the limit when the Spot node has slack.
         """
         from poorbricks.airflow.dag_generator import generate_dag_file
 
@@ -301,14 +302,17 @@ class TestDagGeneration:
             runtime_secret="test-secret",
         )
 
-        assert '"cpu": "2"' in dag_source
-        assert '"memory": "4Gi"' in dag_source
-        # requests == limits — the same CPU / memory figure appears in both
-        # the requests block and the limits block.
-        assert dag_source.count('"cpu": "2"') == 2
-        assert dag_source.count('"memory": "4Gi"') == 2
-        # The old below-limit request figures are gone.
-        assert '"cpu": "250m"' not in dag_source
+        # Request reflects average; limit is the burst ceiling.
+        assert '"cpu": "1"' in dag_source  # request
+        assert '"cpu": "4"' in dag_source  # limit
+        assert '"memory": "2Gi"' in dag_source  # request
+        assert '"memory": "8Gi"' in dag_source  # limit
+        # Request must be strictly below limit so the scheduler packs pods by
+        # the smaller request figure rather than reserving the full burst.
+        assert dag_source.count('"cpu": "1"') == 1
+        assert dag_source.count('"cpu": "4"') == 1
+        assert dag_source.count('"memory": "2Gi"') == 1
+        assert dag_source.count('"memory": "8Gi"') == 1
 
 
 class TestRunnerTimings:
