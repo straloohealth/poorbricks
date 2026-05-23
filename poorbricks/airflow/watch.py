@@ -57,6 +57,7 @@ class TaskOutcome:
     operator: str | None
     log_lines: list[str] = field(default_factory=list)
     log_block_reason: str | None = None  # "secret_key_mismatch" | "http_<code>" | None
+    log_source: str | None = None  # "airflow_api" (default) | "loki"
 
 
 @dataclass
@@ -457,10 +458,13 @@ def attach_failed_task_logs(
                 max_lines=max_lines,
             )
             if loki_lines:
+                # Loki succeeded — these are the real log lines. Clear the
+                # block_reason so render_run prints the excerpts. The
+                # `log_source` attribute records the fallback for callers
+                # that want to surface "via Loki" in their UI.
                 task.log_lines = loki_lines
-                task.log_block_reason = (
-                    f"airflow_api:{reason}; loki_fallback_ok" if reason else None
-                )
+                task.log_block_reason = None
+                task.log_source = "loki"
                 continue
             # Surface both reasons so the user can diagnose
             task.log_lines = []
@@ -517,7 +521,7 @@ def render_run(outcome: RunOutcome) -> str:
             f"    - {task.task_id} ({task.state}, try={task.try_number}, "
             f"{task.duration_s}s, {task.operator})"
         )
-        if task.log_block_reason:
+        if task.log_block_reason and not task.log_lines:
             blocked_reasons.add(task.log_block_reason)
             lines.append(f"        logs blocked: {task.log_block_reason}")
             continue
@@ -525,6 +529,8 @@ def render_run(outcome: RunOutcome) -> str:
         if not excerpts:
             lines.append("        logs empty (no usable lines returned)")
             continue
+        if task.log_source == "loki":
+            lines.append("        (logs via Loki — Airflow API blocked by secret_key)")
         for line in excerpts:
             lines.append(f"        | {line}")
     for reason in blocked_reasons:

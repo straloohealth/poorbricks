@@ -352,7 +352,10 @@ def test_attach_failed_task_logs_falls_back_to_loki() -> None:
 
     task = outcome.tasks[0]
     assert "ERROR boom" in task.log_lines
-    assert task.log_block_reason and "loki_fallback_ok" in task.log_block_reason
+    assert task.log_source == "loki"
+    # log_block_reason is cleared on successful fallback so render_run
+    # prints the log excerpts instead of treating it as blocked.
+    assert task.log_block_reason is None
 
 
 def test_render_run_failed_with_secret_key_block_surfaces_hint() -> None:
