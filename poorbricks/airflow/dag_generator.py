@@ -159,10 +159,11 @@ def _render_dag() -> str:
             start_date=START_DATE,
             catchup=False,
             max_active_runs=1,
-            # Retry tasks killed by transient node pressure so a single
-            # failure does not fail the whole run; pipelines write
-            # idempotently to Postgres.
-            default_args={"retries": 2, "retry_delay": timedelta(minutes=2)},
+            # TODO(revert when stable): retries temporarily disabled so
+            # failed tasks surface their error in ~30s instead of ~6min
+            # while we chase the post-bootstrap gold-pipeline issues.
+            # Original: {"retries": 2, "retry_delay": timedelta(minutes=2)}.
+            default_args={"retries": 0},
             tags=[PREFIX, "poorbricks"],
             is_paused_upon_creation=False,
         )
