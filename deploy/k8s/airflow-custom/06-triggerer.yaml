@@ -53,6 +53,11 @@ spec:
             secretKeyRef:
               name: airflow-fernet-key
               key: jwt-secret
+        - name: AIRFLOW__API__SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: secret-key
         ports:
         - containerPort: 8794
           name: triggerer

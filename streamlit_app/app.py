@@ -27,6 +27,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from streamlit_app import (  # noqa: E402
+    airflow_runs,
     cache,
     contract,
     header,
@@ -82,6 +83,10 @@ def postgres_status_page() -> None:
     postgres_status.render()
 
 
+def airflow_runs_page() -> None:
+    airflow_runs.render()
+
+
 nav = st.navigation(
     [
         st.Page(
@@ -104,6 +109,11 @@ nav = st.navigation(
             postgres_status_page,
             title="Postgres status",
             icon=":material/database:",
+        ),
+        st.Page(
+            airflow_runs_page,
+            title="Airflow runs",
+            icon=":material/event_repeat:",
         ),
     ]
 )

@@ -55,6 +55,11 @@ spec:
             secretKeyRef:
               name: airflow-fernet-key
               key: jwt-secret
+        - name: AIRFLOW__API__SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: airflow-fernet-key
+              key: secret-key
         - name: AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT
           value: "180"
         - name: AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT

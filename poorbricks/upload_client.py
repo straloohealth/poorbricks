@@ -128,6 +128,35 @@ def main(argv: list[str] | None = None) -> int:
         default=7200.0,
         help="maximum total seconds to wait for a busy server before giving up (default: 7200)",
     )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help=(
+            "after a successful upload, trigger one manual DAG run per "
+            "uploaded workflow, poll until terminal, and print a per-task "
+            "summary (with log excerpts when available)"
+        ),
+    )
+    parser.add_argument(
+        "--airflow-url",
+        default=None,
+        help=(
+            "Airflow webserver base URL (only used with --watch). Defaults to "
+            "the company airflow ingress."
+        ),
+    )
+    parser.add_argument(
+        "--watch-poll-interval",
+        type=float,
+        default=None,
+        help="seconds between Airflow API polls when --watch (default: 15)",
+    )
+    parser.add_argument(
+        "--watch-timeout",
+        type=float,
+        default=None,
+        help="max seconds to wait for each DAG run to finish (default: 3600)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -150,7 +179,83 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n✗ server returned {result.status_code}", file=sys.stderr)
         return 1
     print(f"\n✓ uploaded ({result.status_code})")
+
+    if args.watch:
+        return _watch_after_upload(args, result)
     return 0
 
 
+def _watch_after_upload(args: argparse.Namespace, result: "UploadResult") -> int:
+    """Trigger + poll a manual DAG run per workflow in the upload response.
+
+    Returns 0 only if every triggered run reaches state ``success``. Any
+    other terminal state (``failed``, ``upstream_failed``, ``timeout``,
+    ``error``) yields a non-zero exit so this is wired correctly into CI.
+    """
+    from .airflow.watch import (
+        DEFAULT_AIRFLOW_URL,
+        DEFAULT_POLL_INTERVAL_S,
+        DEFAULT_TIMEOUT_S,
+        attach_failed_task_logs,
+        poll_run,
+        render_run,
+        trigger_dag_run,
+    )
+
+    airflow_url = args.airflow_url or DEFAULT_AIRFLOW_URL
+    poll_interval = args.watch_poll_interval or DEFAULT_POLL_INTERVAL_S
+    watch_timeout = args.watch_timeout or DEFAULT_TIMEOUT_S
+
+    workflows = result.body.get("workflows") or []
+    if not workflows:
+        print("\n[watch] no workflows in upload response — nothing to watch.")
+        return 0
+
+    print(
+        f"\n[watch] triggering {len(workflows)} DAG run(s) at {airflow_url} "
+        f"(poll every {poll_interval:.0f}s, timeout {watch_timeout:.0f}s)"
+    )
+    triggered: list[tuple[str, str]] = []  # (dag_id, run_id)
+    for wf in workflows:
+        dag_id = f"{args.prefix}__{wf['name']}"
+        try:
+            run_id = trigger_dag_run(airflow_url, dag_id)
+        except Exception as exc:  # noqa: BLE001 - surface every trigger error
+            print(f"  ! failed to trigger {dag_id}: {exc}", file=sys.stderr)
+            continue
+        print(f"  - {dag_id} → {run_id}")
+        triggered.append((dag_id, run_id))
+
+    if not triggered:
+        print("\n[watch] no runs triggered.", file=sys.stderr)
+        return 1
+
+    exit_code = 0
+    for dag_id, run_id in triggered:
+
+        def _tick(elapsed: float, state: str, _dag_id: str = dag_id) -> None:
+            print(f"    {_dag_id}: {state}  ({elapsed:.0f}s)", flush=True)
+
+        outcome = poll_run(
+            airflow_url,
+            dag_id,
+            run_id,
+            poll_interval=poll_interval,
+            timeout=watch_timeout,
+            on_tick=_tick,
+        )
+        if outcome.failed_tasks:
+            attach_failed_task_logs(airflow_url, outcome)
+        print("")
+        print(render_run(outcome))
+        if outcome.state != "success":
+            exit_code = 1
+
+    return exit_code
+
+
 __all__ = ["UploadResult", "main", "upload"]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
