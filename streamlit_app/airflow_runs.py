@@ -19,6 +19,7 @@ from poorbricks.airflow import watch as _watch
 from utils.contracts import fetch_contract
 
 DEFAULT_AIRFLOW_URL = _watch.DEFAULT_AIRFLOW_URL
+DEFAULT_LOKI_URL = _watch.DEFAULT_LOKI_URL
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -63,9 +64,19 @@ def _list_task_instances(
 
 @st.cache_data(ttl=15, show_spinner=False)
 def _logs(
-    airflow_url: str, dag_id: str, run_id: str, task_id: str, try_number: int
+    airflow_url: str,
+    dag_id: str,
+    run_id: str,
+    task_id: str,
+    try_number: int,
+    *,
+    loki_url: str | None,
+    start_ts: str | None,
+    end_ts: str | None,
 ) -> tuple[list[str], str | None]:
-    return _watch.fetch_task_logs(
+    """Fetch logs from Airflow first; fall back to Loki when the API is
+    blocked by the secret_key mismatch (or otherwise returns no content)."""
+    lines, reason = _watch.fetch_task_logs(
         airflow_url,
         dag_id,
         run_id,
@@ -73,6 +84,19 @@ def _logs(
         try_number=try_number,
         max_lines=400,
     )
+    if lines or not loki_url:
+        return lines, reason
+    loki_lines, loki_reason = _watch.fetch_logs_from_loki(
+        loki_url,
+        dag_id=dag_id,
+        task_id=task_id,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        max_lines=400,
+    )
+    if loki_lines:
+        return loki_lines, f"airflow_api:{reason}; loki_fallback_ok" if reason else None
+    return [], f"{reason or 'empty'} (loki: {loki_reason or 'empty'})"
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -190,7 +214,14 @@ def _render_task_table(
             ):
                 try_number = ti.get("try_number") or 1
                 lines, reason = _logs(
-                    airflow_url, dag_id, run_id, ti.get("task_id"), int(try_number)
+                    airflow_url,
+                    dag_id,
+                    run_id,
+                    ti.get("task_id"),
+                    int(try_number),
+                    loki_url=st.session_state.get("loki_url") or None,
+                    start_ts=ti.get("start_date"),
+                    end_ts=ti.get("end_date"),
                 )
                 if reason == "secret_key_mismatch":
                     st.error(
@@ -258,12 +289,24 @@ def render() -> None:
         "Pulls from the Airflow v2 API; cached for 30s to stay responsive."
     )
 
-    airflow_url = st.text_input(
-        "Airflow webserver URL",
-        value=st.session_state.get("airflow_url", DEFAULT_AIRFLOW_URL),
-        help="Defaults to the company tailnet ingress.",
-    )
-    st.session_state["airflow_url"] = airflow_url
+    cols = st.columns(2)
+    with cols[0]:
+        airflow_url = st.text_input(
+            "Airflow webserver URL",
+            value=st.session_state.get("airflow_url", DEFAULT_AIRFLOW_URL),
+            help="Defaults to the company tailnet ingress.",
+        )
+        st.session_state["airflow_url"] = airflow_url
+    with cols[1]:
+        loki_url = st.text_input(
+            "Loki URL (log fallback)",
+            value=st.session_state.get("loki_url", DEFAULT_LOKI_URL),
+            help=(
+                "Used as a fallback when the Airflow v2 logs API returns the "
+                "`secret_key` mismatch warning. Leave empty to disable."
+            ),
+        )
+        st.session_state["loki_url"] = loki_url
 
     if st.button("Refresh"):
         _list_dags.clear()

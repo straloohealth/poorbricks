@@ -34,6 +34,11 @@ TERMINAL_STATES = frozenset({"success", "failed", "skipped", "upstream_failed"})
 DEFAULT_AIRFLOW_URL = (
     "https://airflow-airflow-webserver-ingress.stingray-ordinal.ts.net"
 )
+DEFAULT_LOKI_URL = "http://loki-gateway.monitoring.svc.cluster.local"
+"""Cluster-internal Loki gateway. Only reachable from inside the GKE cluster
+(e.g. from coder workspaces, the streamlit pod, the api-server itself).
+Override with ``--loki-url`` when invoking from outside."""
+
 DEFAULT_POLL_INTERVAL_S = 15.0
 DEFAULT_TIMEOUT_S = 60 * 60  # 1h
 LOG_PAGE_SIZE = 200  # how many log lines we'll surface per failed task
@@ -322,11 +327,115 @@ def extract_log_errors(lines: list[str], *, max_errors: int = 30) -> list[str]:
     return keep[:max_errors]
 
 
+_POD_NAME_INVALID = __import__("re").compile(r"[^a-z0-9]+")
+
+
+def _sanitize_for_pod_name(name: str) -> str:
+    """Mirror Airflow's pod-name sanitization for the KubernetesPodOperator.
+
+    The operator names a pod ``{dag_id}-{task_id}-{random}``. Names must
+    pass RFC 1123 (DNS label), so non-alphanumeric runs are collapsed to
+    a single dash and the whole name is lowercased. Empirically, the
+    DAG ``gold-biz__gold-biz`` becomes ``gold-biz-gold-biz`` — the double
+    underscore collapses to a single dash, not two.
+
+    Reversing the transformation gives us a Loki regex that matches the
+    pod even when the original DAG / task id used underscores or other
+    separators.
+    """
+    return _POD_NAME_INVALID.sub("-", name.lower()).strip("-")
+
+
+def fetch_logs_from_loki(
+    loki_url: str,
+    *,
+    dag_id: str,
+    task_id: str,
+    start_ts: str | None,
+    end_ts: str | None,
+    max_lines: int = LOG_PAGE_SIZE,
+) -> tuple[list[str], str | None]:
+    """Pull task pod logs from Loki when the Airflow API is blocked.
+
+    Falls back to a 1-hour window around ``end_ts`` when timestamps are
+    missing. Returns the same ``(lines, block_reason)`` shape as
+    :func:`fetch_task_logs` so :func:`attach_failed_task_logs` can swap
+    sources transparently.
+    """
+    import time as _time
+    from datetime import datetime, timedelta, timezone
+
+    def _ns(dt: datetime) -> str:
+        return str(int(dt.timestamp()) * 1_000_000_000)
+
+    def _parse(value: str | None, default: datetime) -> datetime:
+        if not value:
+            return default
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return default
+
+    now = datetime.now(timezone.utc)
+    end_dt = _parse(end_ts, now)
+    # Loki ingestion is async; give it a 60s tail past `end_dt`.
+    end_dt = end_dt + timedelta(seconds=60)
+    start_dt = _parse(start_ts, end_dt - timedelta(hours=1)) - timedelta(seconds=60)
+
+    pod_prefix = f"{_sanitize_for_pod_name(dag_id)}-{_sanitize_for_pod_name(task_id)}"
+    # Match any pod whose name begins with `{dag}-{task}` — the trailing
+    # random hash is appended by Airflow.
+    logql = f'{{namespace="airflow", pod=~"{pod_prefix}.+"}}'
+
+    url = (
+        f"{loki_url.rstrip('/')}/loki/api/v1/query_range"
+        f"?query={urllib.parse.quote(logql)}"
+        f"&start={_ns(start_dt)}&end={_ns(end_dt)}"
+        f"&limit={int(max_lines)}&direction=BACKWARD"
+    )
+    try:
+        status, text = _request("GET", url, timeout=20.0)
+    except Exception as exc:  # noqa: BLE001 - loki is best-effort
+        return [], f"loki_unreachable: {exc}"
+    if status >= 400:
+        return [], f"loki_http_{status}"
+    try:
+        body = _json_loads(text)
+    except JSONDecodeError:
+        return [text[:4000]], None
+
+    streams = (body.get("data") or {}).get("result") or []
+    if not streams:
+        return [], "loki_no_streams"
+
+    # Each stream is one container-stdout/stderr. Flatten by timestamp ASC
+    # and pick the most recent ``max_lines`` so the tail of the run is what
+    # the caller sees.
+    entries: list[tuple[str, str]] = []
+    for stream in streams:
+        for ts, line in stream.get("values") or []:
+            entries.append((str(ts), str(line).rstrip()))
+    entries.sort(key=lambda kv: kv[0])
+    lines = [line for _, line in entries if line]
+    return lines[-max_lines:], None
+
+
 def attach_failed_task_logs(
-    airflow_url: str, outcome: RunOutcome, *, max_lines: int = LOG_PAGE_SIZE
+    airflow_url: str,
+    outcome: RunOutcome,
+    *,
+    max_lines: int = LOG_PAGE_SIZE,
+    loki_url: str | None = DEFAULT_LOKI_URL,
 ) -> None:
     """Populate ``log_lines`` / ``log_block_reason`` for every failed task
-    in ``outcome``."""
+    in ``outcome``.
+
+    Tries the Airflow v2 logs API first. When that returns the
+    ``secret_key_mismatch`` advisory (or any other empty payload), retries
+    via Loki using the worker-pod naming pattern, so we still surface logs
+    even when the cluster's secret_key sync is broken. Pass
+    ``loki_url=None`` to disable the fallback.
+    """
     for task in outcome.failed_tasks:
         if task.try_number is None:
             continue
@@ -338,6 +447,27 @@ def attach_failed_task_logs(
             try_number=task.try_number,
             max_lines=max_lines,
         )
+        if not lines and loki_url:
+            loki_lines, loki_reason = fetch_logs_from_loki(
+                loki_url,
+                dag_id=outcome.dag_id,
+                task_id=task.task_id,
+                start_ts=task.start_date,
+                end_ts=task.end_date,
+                max_lines=max_lines,
+            )
+            if loki_lines:
+                task.log_lines = loki_lines
+                task.log_block_reason = (
+                    f"airflow_api:{reason}; loki_fallback_ok" if reason else None
+                )
+                continue
+            # Surface both reasons so the user can diagnose
+            task.log_lines = []
+            task.log_block_reason = (
+                f"{reason or 'empty'} (loki: {loki_reason or 'empty'})"
+            )
+            continue
         task.log_lines = lines
         task.log_block_reason = reason
 

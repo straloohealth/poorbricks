@@ -157,6 +157,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="max seconds to wait for each DAG run to finish (default: 3600)",
     )
+    parser.add_argument(
+        "--loki-url",
+        default=None,
+        help=(
+            "Loki gateway URL used as a fallback when the Airflow log API "
+            "returns the secret_key advisory. Defaults to the in-cluster "
+            "address `http://loki-gateway.monitoring.svc.cluster.local`. "
+            "Pass an empty string to disable the fallback."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -194,6 +204,7 @@ def _watch_after_upload(args: argparse.Namespace, result: "UploadResult") -> int
     """
     from .airflow.watch import (
         DEFAULT_AIRFLOW_URL,
+        DEFAULT_LOKI_URL,
         DEFAULT_POLL_INTERVAL_S,
         DEFAULT_TIMEOUT_S,
         attach_failed_task_logs,
@@ -205,6 +216,11 @@ def _watch_after_upload(args: argparse.Namespace, result: "UploadResult") -> int
     airflow_url = args.airflow_url or DEFAULT_AIRFLOW_URL
     poll_interval = args.watch_poll_interval or DEFAULT_POLL_INTERVAL_S
     watch_timeout = args.watch_timeout or DEFAULT_TIMEOUT_S
+    # Empty string explicitly disables the Loki fallback; None uses the default.
+    loki_url: str | None = (
+        DEFAULT_LOKI_URL if args.loki_url is None
+        else (args.loki_url or None)
+    )
 
     workflows = result.body.get("workflows") or []
     if not workflows:
@@ -245,7 +261,7 @@ def _watch_after_upload(args: argparse.Namespace, result: "UploadResult") -> int
             on_tick=_tick,
         )
         if outcome.failed_tasks:
-            attach_failed_task_logs(airflow_url, outcome)
+            attach_failed_task_logs(airflow_url, outcome, loki_url=loki_url)
         print("")
         print(render_run(outcome))
         if outcome.state != "success":

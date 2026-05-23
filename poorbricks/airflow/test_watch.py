@@ -260,6 +260,101 @@ def test_render_run_failed_includes_log_excerpt() -> None:
     assert "RuntimeError: boom" in text
 
 
+def test_sanitize_for_pod_name_collapses_runs() -> None:
+    assert watch._sanitize_for_pod_name("gold-biz__gold-biz") == "gold-biz-gold-biz"
+    assert watch._sanitize_for_pod_name("account_roi_monthly") == "account-roi-monthly"
+    assert watch._sanitize_for_pod_name("__lead__trail__") == "lead-trail"
+
+
+def test_fetch_logs_from_loki_returns_tail() -> None:
+    body = {
+        "data": {
+            "result": [
+                {
+                    "stream": {
+                        "namespace": "airflow",
+                        "pod": "gold-biz-gold-biz-acquisition-daily-abc123",
+                    },
+                    "values": [
+                        ["1700000000000000000", "INFO starting"],
+                        ["1700000010000000000", "ERROR boom"],
+                        ["1700000020000000000", "Traceback (most recent call last):"],
+                    ],
+                }
+            ]
+        }
+    }
+    with patch.object(
+        watch,
+        "_request",
+        return_value=(200, __import__("json").dumps(body)),
+    ):
+        lines, reason = watch.fetch_logs_from_loki(
+            "http://loki",
+            dag_id="gold-biz__gold-biz",
+            task_id="acquisition_daily",
+            start_ts="2026-05-23T10:00:00Z",
+            end_ts="2026-05-23T10:05:00Z",
+        )
+    assert reason is None
+    assert any("Traceback" in line for line in lines)
+    assert any("ERROR boom" in line for line in lines)
+
+
+def test_fetch_logs_from_loki_no_streams() -> None:
+    body = {"data": {"result": []}}
+    with patch.object(
+        watch,
+        "_request",
+        return_value=(200, __import__("json").dumps(body)),
+    ):
+        lines, reason = watch.fetch_logs_from_loki(
+            "http://loki",
+            dag_id="d",
+            task_id="t",
+            start_ts=None,
+            end_ts=None,
+        )
+    assert lines == []
+    assert reason == "loki_no_streams"
+
+
+def test_attach_failed_task_logs_falls_back_to_loki() -> None:
+    outcome = watch.RunOutcome(
+        dag_id="gold-biz__gold-biz",
+        run_id="manual__abc",
+        state="failed",
+        started_at="2026-05-23T10:00:00Z",
+        ended_at="2026-05-23T10:05:00Z",
+        duration_s=300.0,
+        tasks=[
+            watch.TaskOutcome(
+                task_id="acquisition_daily",
+                state="failed",
+                try_number=3,
+                start_date="2026-05-23T10:00:00Z",
+                end_date="2026-05-23T10:01:00Z",
+                duration_s=60.0,
+                operator="KubernetesPodOperator",
+            )
+        ],
+    )
+    with patch.object(
+        watch,
+        "fetch_task_logs",
+        return_value=([], "secret_key_mismatch"),
+    ), patch.object(
+        watch,
+        "fetch_logs_from_loki",
+        return_value=(["ERROR boom", "Traceback (most recent call last):"], None),
+    ):
+        watch.attach_failed_task_logs("http://airflow", outcome, loki_url="http://loki")
+
+    task = outcome.tasks[0]
+    assert "ERROR boom" in task.log_lines
+    assert task.log_block_reason and "loki_fallback_ok" in task.log_block_reason
+
+
 def test_render_run_failed_with_secret_key_block_surfaces_hint() -> None:
     outcome = watch.RunOutcome(
         dag_id="gold-biz__gold-biz",
