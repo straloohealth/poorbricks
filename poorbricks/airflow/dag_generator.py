@@ -282,6 +282,7 @@ def _render_volumes_and_env() -> str:
             # task threads as the pod is allowed to burst to (instead of
             # guessing from cgroups). Under contention CFS throttles them.
             k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WORKER_CPU_LIMIT__]"),
+            k8s.V1EnvVar(name="SPARK_DRIVER_MEMORY", value="4g"),
             k8s.V1EnvVar(
                 name="POSTGRES_USER",
                 value_from=k8s.V1EnvVarSource(
