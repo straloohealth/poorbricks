@@ -5,6 +5,8 @@ metadata:
   namespace: airflow
   labels:
     app: poorbricks-server
+  annotations:
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
   selector:
