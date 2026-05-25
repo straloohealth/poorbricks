@@ -97,13 +97,20 @@ class Finding:
 def _workspace_roots() -> list[Path]:
     """Search roots for ``tables/.../transform.py`` lookups.
 
-    The diagnostics module lives inside ``poorbricks/``. Walk one level up
-    to find sibling repos that publish contracts (silver/, watson/, …).
+    The diagnostics module lives inside ``poorbricks/``. Walk one level
+    up to find sibling repos that publish contracts (silver/, watson/, …).
+    Also includes any ``_siblings/<repo>/`` subdirectories — convention
+    for shallow-cloning the bronze source repos (deadpool, hermes,
+    jarvis, dexter, hawkeye, smith) into the workspace so ghost-contract
+    detection can resolve them without false positives.
     """
     here = Path(__file__).resolve().parent.parent
     workspace = here.parent  # gold-pipelines/
-    candidates = [workspace]
+    candidates: list[Path] = [workspace]
     candidates.extend(p for p in workspace.iterdir() if p.is_dir())
+    siblings = workspace / "_siblings"
+    if siblings.is_dir():
+        candidates.extend(p for p in siblings.iterdir() if p.is_dir())
     return candidates
 
 
