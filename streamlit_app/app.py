@@ -31,6 +31,7 @@ from streamlit_app import (  # noqa: E402
     cache,
     contract,
     header,
+    health,
     lineage,
     postgres_status,
     runner,
@@ -79,6 +80,10 @@ def lineage_page() -> None:
     lineage.render()
 
 
+def health_page() -> None:
+    health.render()
+
+
 def postgres_status_page() -> None:
     postgres_status.render()
 
@@ -104,6 +109,11 @@ nav = st.navigation(
             lineage_page,
             title="Lineage",
             icon=":material/account_tree:",
+        ),
+        st.Page(
+            health_page,
+            title="Health",
+            icon=":material/health_and_safety:",
         ),
         st.Page(
             postgres_status_page,

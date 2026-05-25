@@ -348,6 +348,48 @@ def check_empty_row_count(contracts: list[dict[str, Any]]) -> Iterable[Finding]:
             )
 
 
+def check_weak_contracts(contracts: list[dict[str, Any]]) -> Iterable[Finding]:
+    """Silver/gold contracts missing core production guards.
+
+    A "strong" contract declares (at minimum) all four of:
+      * ``UNIQUE_KEYS``                  (catches duplicate rows)
+      * ``NON_NULL_COLUMNS``             (catches missing keys / grain)
+      * one of ``NULL_RATE_MAX`` *or* ``ENUM_VALUES``  (catches data drift
+                                          on at least one column)
+      * ``FRESH_COLUMN`` (facts only)    (catches stale pipelines)
+
+    A "weak" contract is missing two or more of those. Surfaces the
+    aggregate gap rather than four separate findings per table — useful
+    for the Health panel's "contracts to harden" list.
+    """
+    for c in contracts:
+        level = c.get("level") or ""
+        if level == "bronze":
+            continue
+        e = c.get("expectations") or {}
+        gaps: list[str] = []
+        if not e.get("unique_keys"):
+            gaps.append("UNIQUE_KEYS")
+        if not e.get("non_null_columns"):
+            gaps.append("NON_NULL_COLUMNS")
+        if not e.get("null_rate_max") and not e.get("enum_values"):
+            gaps.append("NULL_RATE_MAX or ENUM_VALUES")
+        is_fact = c["table_name"].startswith("fact_") or level == "gold"
+        if is_fact and not e.get("fresh_column"):
+            gaps.append("FRESH_COLUMN")
+        if len(gaps) >= 2:
+            yield Finding(
+                check="weak_contract",
+                severity=Severity.INFO,
+                table=c["table_name"],
+                message=(
+                    f"Contract missing {len(gaps)} production guards: "
+                    + ", ".join(gaps)
+                ),
+                details={"gaps": gaps, "level": level},
+            )
+
+
 _CHECKS = (
     check_ghost_contracts,
     check_orphan_silvers,
@@ -355,6 +397,7 @@ _CHECKS = (
     check_soft_primary_keys,
     check_freshness_declared,
     check_empty_row_count,
+    check_weak_contracts,
 )
 
 
