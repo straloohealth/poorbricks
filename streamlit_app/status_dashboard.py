@@ -234,9 +234,7 @@ def _render_contract_catalog(contracts: list[dict[str, Any]]) -> None:
                 "comment": contract.get("comment"),
             }
         )
-    df = pd.DataFrame(rows).sort_values(
-        "age (h)", ascending=False, na_position="last"
-    )
+    df = pd.DataFrame(rows).sort_values("age (h)", ascending=False, na_position="last")
 
     by_level = df.groupby("level", dropna=False).size().to_dict()
     cols = st.columns(4)
@@ -249,7 +247,9 @@ def _render_contract_catalog(contracts: list[dict[str, Any]]) -> None:
     cols[2].metric(
         "Oldest table",
         str(oldest["table"]) if oldest is not None else "—",
-        f"{oldest['age (h)']:.1f}h" if oldest is not None and oldest["age (h)"] is not None else None,
+        f"{oldest['age (h)']:.1f}h"
+        if oldest is not None and oldest["age (h)"] is not None
+        else None,
         delta_color="inverse",
     )
     most_recent = df["pushed_at"].dropna().max() if "pushed_at" in df else None

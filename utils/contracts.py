@@ -220,7 +220,7 @@ def _bson_safe(value: Any) -> Any:
         return datetime(value.year, value.month, value.day)
     if isinstance(value, dict):
         return {k: _bson_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_bson_safe(item) for item in value]
     return value
 

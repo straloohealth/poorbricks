@@ -19,14 +19,17 @@ why no detail is available.
 
 from __future__ import annotations
 
+import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from json import JSONDecodeError, dumps as _json_dumps, loads as _json_loads
-from typing import Any
+from datetime import UTC, datetime
+from json import JSONDecodeError
+from json import dumps as _json_dumps
+from json import loads as _json_loads
+from typing import Any, cast
 
 TERMINAL_STATES = frozenset({"success", "failed", "skipped", "upstream_failed"})
 """DAG/task states that mean polling can stop."""
@@ -124,12 +127,12 @@ def trigger_dag_run(
 ) -> str:
     """Trigger a manual DAG run and return its ``dag_run_id``."""
     if logical_date is None:
-        logical_date = datetime.now(timezone.utc)
+        logical_date = datetime.now(UTC)
     iso = logical_date.strftime("%Y-%m-%dT%H:%M:%S+00:00")
     url = f"{airflow_url.rstrip('/')}/api/v2/dags/{urllib.parse.quote(dag_id, safe='')}/dagRuns"
     status, text = _request("POST", url, body={"logical_date": iso}, timeout=timeout)
     body = _json_or_raise(status, text, f"trigger {dag_id}")
-    return body["dag_run_id"]
+    return cast(str, body["dag_run_id"])
 
 
 # ---- Polling ---------------------------------------------------------------
@@ -142,7 +145,9 @@ def _get_run(airflow_url: str, dag_id: str, run_id: str) -> dict[str, Any]:
         f"{urllib.parse.quote(run_id, safe='')}"
     )
     status, text = _request("GET", url)
-    return _json_or_raise(status, text, f"get-run {dag_id}/{run_id}")
+    return cast(
+        "dict[str, Any]", _json_or_raise(status, text, f"get-run {dag_id}/{run_id}")
+    )
 
 
 def _list_task_instances(
@@ -155,7 +160,7 @@ def _list_task_instances(
     )
     status, text = _request("GET", url)
     body = _json_or_raise(status, text, f"list-tis {dag_id}/{run_id}")
-    return body.get("task_instances", [])
+    return cast("list[dict[str, Any]]", body.get("task_instances", []))
 
 
 def poll_run(
@@ -328,7 +333,7 @@ def extract_log_errors(lines: list[str], *, max_errors: int = 30) -> list[str]:
     return keep[:max_errors]
 
 
-_POD_NAME_INVALID = __import__("re").compile(r"[^a-z0-9]+")
+_POD_NAME_INVALID = re.compile(r"[^a-z0-9]+")
 
 
 def _sanitize_for_pod_name(name: str) -> str:
@@ -363,8 +368,7 @@ def fetch_logs_from_loki(
     :func:`fetch_task_logs` so :func:`attach_failed_task_logs` can swap
     sources transparently.
     """
-    import time as _time
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     def _ns(dt: datetime) -> str:
         return str(int(dt.timestamp()) * 1_000_000_000)
@@ -377,7 +381,7 @@ def fetch_logs_from_loki(
         except ValueError:
             return default
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     end_dt = _parse(end_ts, now)
     # Loki ingestion is async; give it a 60s tail past `end_dt`.
     end_dt = end_dt + timedelta(seconds=60)

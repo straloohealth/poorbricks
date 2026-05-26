@@ -9,7 +9,6 @@ import pytest
 
 from poorbricks.airflow import watch
 
-
 # ---- extract_log_errors ----------------------------------------------------
 
 
@@ -339,14 +338,17 @@ def test_attach_failed_task_logs_falls_back_to_loki() -> None:
             )
         ],
     )
-    with patch.object(
-        watch,
-        "fetch_task_logs",
-        return_value=([], "secret_key_mismatch"),
-    ), patch.object(
-        watch,
-        "fetch_logs_from_loki",
-        return_value=(["ERROR boom", "Traceback (most recent call last):"], None),
+    with (
+        patch.object(
+            watch,
+            "fetch_task_logs",
+            return_value=([], "secret_key_mismatch"),
+        ),
+        patch.object(
+            watch,
+            "fetch_logs_from_loki",
+            return_value=(["ERROR boom", "Traceback (most recent call last):"], None),
+        ),
     ):
         watch.attach_failed_task_logs("http://airflow", outcome, loki_url="http://loki")
 

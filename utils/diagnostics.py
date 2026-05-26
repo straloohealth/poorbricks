@@ -164,9 +164,7 @@ def check_ghost_contracts(contracts: list[dict[str, Any]]) -> Iterable[Finding]:
         if _module_path_to_source(module) is not None:
             continue
         level = c.get("level") or ""
-        severity = (
-            Severity.WARNING if level == "bronze" else Severity.ERROR
-        )
+        severity = Severity.WARNING if level == "bronze" else Severity.ERROR
         yield Finding(
             check="ghost_contract",
             severity=severity,
@@ -333,9 +331,7 @@ def check_freshness_declared(contracts: list[dict[str, Any]]) -> Iterable[Findin
                 check="missing_freshness",
                 severity=Severity.INFO if is_dim else Severity.WARNING,
                 table=name,
-                message=(
-                    "No FRESH_COLUMN declared — stale data won't trip an alarm."
-                ),
+                message=("No FRESH_COLUMN declared — stale data won't trip an alarm."),
             )
 
 

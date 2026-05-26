@@ -306,13 +306,13 @@ class TestDagGeneration:
         assert '"cpu": "1"' in dag_source  # request
         assert '"cpu": "4"' in dag_source  # limit
         assert '"memory": "2Gi"' in dag_source  # request
-        assert '"memory": "8Gi"' in dag_source  # limit
+        assert '"memory": "12Gi"' in dag_source  # limit
         # Request must be strictly below limit so the scheduler packs pods by
         # the smaller request figure rather than reserving the full burst.
         assert dag_source.count('"cpu": "1"') == 1
         assert dag_source.count('"cpu": "4"') == 1
         assert dag_source.count('"memory": "2Gi"') == 1
-        assert dag_source.count('"memory": "8Gi"') == 1
+        assert dag_source.count('"memory": "12Gi"') == 1
 
 
 class TestRunnerTimings:

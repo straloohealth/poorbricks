@@ -8,7 +8,6 @@ plus tolerance overrides and snapshot round-trip.
 from __future__ import annotations
 
 import json
-import math
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +15,6 @@ import pandas as pd
 import pytest
 
 from poorbricks.regression import (
-    ColumnDiff,
     DataFrameSource,
     MigrationDiff,
     MigrationReport,
@@ -124,7 +122,7 @@ def test_numeric_tolerance_allows_tiny_drift() -> None:
         _cand_drifted(),
         numeric_tolerances={"pain_level": NumericTolerance(atol=0.5)},
     )
-    cd2 = {c.name: c for c in report_loose.columns}
+    {c.name: c for c in report_loose.columns}
     # 7.0 vs 7.1 now passes; NaN vs 0 still flagged → 1/3 = 33% mismatch
     # still > 10% default → fails. Need to override tolerance too:
     report_loose2 = _diff(

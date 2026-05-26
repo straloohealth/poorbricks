@@ -95,7 +95,18 @@ def _build_tarball(*, tables_dir: Path, workflows_dir: Path) -> bytes:
     return buf.getvalue()
 
 
-_SKIP_DIRS = frozenset({"__pycache__", ".venv", "venv", ".pytest_cache", ".mypy_cache", "node_modules", ".git", ".ruff_cache"})
+_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        "node_modules",
+        ".git",
+        ".ruff_cache",
+    }
+)
 
 
 def _skip_pycache(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
@@ -200,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _watch_after_upload(args: argparse.Namespace, result: "UploadResult") -> int:
+def _watch_after_upload(args: argparse.Namespace, result: UploadResult) -> int:
     """Trigger + poll a manual DAG run per workflow in the upload response.
 
     Returns 0 only if every triggered run reaches state ``success``. Any
@@ -223,8 +234,7 @@ def _watch_after_upload(args: argparse.Namespace, result: "UploadResult") -> int
     watch_timeout = args.watch_timeout or DEFAULT_TIMEOUT_S
     # Empty string explicitly disables the Loki fallback; None uses the default.
     loki_url: str | None = (
-        DEFAULT_LOKI_URL if args.loki_url is None
-        else (args.loki_url or None)
+        DEFAULT_LOKI_URL if args.loki_url is None else (args.loki_url or None)
     )
 
     workflows = result.body.get("workflows") or []

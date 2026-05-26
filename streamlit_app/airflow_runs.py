@@ -147,7 +147,9 @@ def _render_dag_picker(dags: list[dict[str, Any]]) -> str | None:
             key="airflow_runs_prefix",
             help="Filter by the prefix every upload writes under (e.g. `gold-biz`).",
         )
-    filtered = [d for d in pool if prefix == "(all)" or d["dag_id"].startswith(prefix + "__")]
+    filtered = [
+        d for d in pool if prefix == "(all)" or d["dag_id"].startswith(prefix + "__")
+    ]
     with cols[1]:
         dag_id = st.selectbox(
             "DAG",
@@ -162,7 +164,9 @@ def _render_run_table(
     airflow_url: str, dag_id: str, runs: list[dict[str, Any]]
 ) -> str | None:
     if not runs:
-        st.info(f"No runs yet for `{dag_id}`. Trigger one with `poorbricks upload --watch`.")
+        st.info(
+            f"No runs yet for `{dag_id}`. Trigger one with `poorbricks upload --watch`."
+        )
         return None
     options = []
     for r in runs:
@@ -171,9 +175,14 @@ def _render_run_table(
         start = (r.get("start_date") or "—").replace("T", " ").split(".")[0]
         end = (r.get("end_date") or "—").replace("T", " ").split(".")[0]
         dur = r.get("duration")
-        dur_s = f"{dur:.0f}s" if isinstance(dur, (int, float)) else "—"
+        dur_s = f"{dur:.0f}s" if isinstance(dur, int | float) else "—"
         run_type = r.get("run_type", "?")
-        options.append((run_id, f"{_state_badge(state)}  {run_type:7s}  {start} → {end}  ({dur_s})  {run_id}"))
+        options.append(
+            (
+                run_id,
+                f"{_state_badge(state)}  {run_type:7s}  {start} → {end}  ({dur_s})  {run_id}",
+            )
+        )
     labels = [text for _, text in options]
     idx = st.radio(
         "Recent runs",
@@ -197,7 +206,9 @@ def _render_task_table(
                 "state": state,
                 "try": ti.get("try_number"),
                 "duration_s": (
-                    f"{ti['duration']:.1f}" if isinstance(ti.get("duration"), (int, float)) else "—"
+                    f"{ti['duration']:.1f}"
+                    if isinstance(ti.get("duration"), int | float)
+                    else "—"
                 ),
                 "operator": ti.get("operator_name") or ti.get("operator"),
                 "pipeline": ti.get("rendered_fields", {}).get("name") or "",
@@ -259,7 +270,9 @@ def _render_task_table(
                 continue
             with st.expander(f"{task_id}  —  profile + contract metadata"):
                 profile = contract.get("profile") or contract.get("field_profile") or {}
-                row_count = profile.get("row_count") if isinstance(profile, dict) else None
+                row_count = (
+                    profile.get("row_count") if isinstance(profile, dict) else None
+                )
                 if row_count is not None:
                     st.metric("Rows", row_count)
                 columns = profile.get("columns") if isinstance(profile, dict) else None
@@ -274,12 +287,16 @@ def _render_task_table(
                         hide_index=True,
                     )
                 else:
-                    st.write("_No column profile in contract. Profile shape: "
-                             f"`{type(profile).__name__}`._")
+                    st.write(
+                        "_No column profile in contract. Profile shape: "
+                        f"`{type(profile).__name__}`._"
+                    )
                 example_rows = contract.get("example_rows") or []
                 if example_rows:
                     st.caption(f"Example rows ({len(example_rows)})")
-                    st.dataframe(example_rows, use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        example_rows, use_container_width=True, hide_index=True
+                    )
 
 
 def render() -> None:
