@@ -15,11 +15,6 @@ class EmptyCollectionError(Exception):
     """Raised when a collection yields no documents to sample."""
 
 
-def _public_uri(mongo_uri: str) -> str:
-    """Strip the Atlas private-peering suffix (-pri) so the public endpoint is used."""
-    return mongo_uri.replace("-pri.", ".")
-
-
 def sample_random_docs(
     mongo_uri: str, db: str, collection: str, sample_size: int = 1000
 ) -> list[dict[str, Any]]:
@@ -30,9 +25,7 @@ def sample_random_docs(
     """
     import pymongo
 
-    client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(
-        _public_uri(mongo_uri)
-    )
+    client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(mongo_uri)
     try:
         raw = list(
             client[db][collection].aggregate(
