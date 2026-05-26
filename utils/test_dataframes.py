@@ -89,9 +89,9 @@ class TestSchemaMismatchIssues:
 
         # Now the schemas should match
         for field_name in ["messages_total_count", "days_since_last_message"]:
-            assert isinstance(casted_fields[field_name], LongType), (
-                f"{field_name} should be LongType after casting"
-            )
+            assert isinstance(
+                casted_fields[field_name], LongType
+            ), f"{field_name} should be LongType after casting"
             assert isinstance(
                 casted_fields[field_name], type(target_fields[field_name])
             ), f"{field_name} types should match"

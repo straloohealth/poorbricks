@@ -148,7 +148,9 @@ def find_stubs_in(transform_path: Path) -> list[StubFinding]:
         chain_node = inner
         lit_call: ast.Call | None = None
         # The chain may be `f.lit(...).cast(...).alias(col)` so unwrap repeatedly.
-        while isinstance(chain_node, ast.Call) and isinstance(chain_node.func, ast.Attribute):
+        while isinstance(chain_node, ast.Call) and isinstance(
+            chain_node.func, ast.Attribute
+        ):
             if chain_node.func.attr == "lit":
                 lit_call = chain_node
                 break

@@ -24,8 +24,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from json import JSONDecodeError, dumps as _json_dumps, loads as _json_loads
+from datetime import UTC, datetime
+from json import JSONDecodeError
+from json import dumps as _json_dumps
+from json import loads as _json_loads
 from typing import Any
 
 TERMINAL_STATES = frozenset({"success", "failed", "skipped", "upstream_failed"})
@@ -124,7 +126,7 @@ def trigger_dag_run(
 ) -> str:
     """Trigger a manual DAG run and return its ``dag_run_id``."""
     if logical_date is None:
-        logical_date = datetime.now(timezone.utc)
+        logical_date = datetime.now(UTC)
     iso = logical_date.strftime("%Y-%m-%dT%H:%M:%S+00:00")
     url = f"{airflow_url.rstrip('/')}/api/v2/dags/{urllib.parse.quote(dag_id, safe='')}/dagRuns"
     status, text = _request("POST", url, body={"logical_date": iso}, timeout=timeout)
@@ -363,8 +365,7 @@ def fetch_logs_from_loki(
     :func:`fetch_task_logs` so :func:`attach_failed_task_logs` can swap
     sources transparently.
     """
-    import time as _time
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     def _ns(dt: datetime) -> str:
         return str(int(dt.timestamp()) * 1_000_000_000)
@@ -377,7 +378,7 @@ def fetch_logs_from_loki(
         except ValueError:
             return default
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     end_dt = _parse(end_ts, now)
     # Loki ingestion is async; give it a 60s tail past `end_dt`.
     end_dt = end_dt + timedelta(seconds=60)

@@ -23,14 +23,12 @@ report.assert_no_regression()
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .sources import Source
-
 
 # ---- Tolerance --------------------------------------------------------------
 
@@ -46,8 +44,8 @@ class NumericTolerance:
     atol: float = 0.0
     rtol: float = 0.0
 
-    def close(self, l: float, r: float) -> bool:
-        return abs(l - r) <= self.atol + self.rtol * abs(r)
+    def close(self, left: float, r: float) -> bool:
+        return abs(left - r) <= self.atol + self.rtol * abs(r)
 
 
 # ---- Per-column result ------------------------------------------------------
@@ -141,8 +139,15 @@ class MigrationReport:
             "| status | column | mismatch | tol | ref_null% | cand_null% | note |",
             "|---|---|---:|---:|---:|---:|---|",
         ]
-        order = {"fail": 0, "missing_in_candidate": 1, "extra_in_candidate": 2, "pass": 3}
-        for c in sorted(self.columns, key=lambda r: (order.get(r.status, 9), -r.mismatch_pct)):
+        order = {
+            "fail": 0,
+            "missing_in_candidate": 1,
+            "extra_in_candidate": 2,
+            "pass": 3,
+        }
+        for c in sorted(
+            self.columns, key=lambda r: (order.get(r.status, 9), -r.mismatch_pct)
+        ):
             badge = {
                 "pass": "✓",
                 "fail": "✗",
@@ -217,8 +222,6 @@ class MigrationDiff:
     label: str = "migration"
 
     def run(self) -> MigrationReport:
-        import pandas as pd
-
         ref = self.reference.load()
         can = self.candidate.load()
 
@@ -247,7 +250,9 @@ class MigrationDiff:
         only_can = only_can[only_can["_merge"] == "left_only"]
         in_both = ref_keys.merge(can_keys, how="inner")
 
-        joined = ref.merge(can, on=self.join_keys, how="inner", suffixes=("__ref", "__can"))
+        joined = ref.merge(
+            can, on=self.join_keys, how="inner", suffixes=("__ref", "__can")
+        )
 
         ignored = set(self.ignore_columns)
         ref_cols = set(ref.columns) - set(self.join_keys) - ignored
@@ -305,38 +310,46 @@ class MigrationDiff:
 # ---- Per-column comparison primitives --------------------------------------
 
 
-def _compare_column(name: str, l, r, *, tolerance: float, numeric_tol: NumericTolerance | None):
+def _compare_column(
+    name: str, left, r, *, tolerance: float, numeric_tol: NumericTolerance | None
+):
     """Score one column. Returns a ColumnDiff."""
     import pandas as pd
 
-    n = len(l)
+    n = len(left)
     if n == 0:
         return ColumnDiff(
             name=name, status="pass", tolerance=tolerance, note="no rows in both"
         )
 
-    l_null_pct = l.isna().mean() * 100
+    l_null_pct = left.isna().mean() * 100
     r_null_pct = r.isna().mean() * 100
 
-    both_null = l.isna() & r.isna()
-    only_one_null = l.isna() ^ r.isna()
+    both_null = left.isna() & r.isna()
+    only_one_null = left.isna() ^ r.isna()
 
     # Coerce numeric strings to numbers for the equality check (legacy mongo
     # often stores ints as strings).
-    l_norm, r_norm = _coerce_pair(l, r)
+    l_norm, r_norm = _coerce_pair(left, r)
 
-    if numeric_tol is not None and _is_numeric_like(l_norm) and _is_numeric_like(r_norm):
+    if (
+        numeric_tol is not None
+        and _is_numeric_like(l_norm)
+        and _is_numeric_like(r_norm)
+    ):
         delta = (l_norm.astype(float) - r_norm.astype(float)).abs()
         thresh = numeric_tol.atol + numeric_tol.rtol * r_norm.astype(float).abs()
         equal = (delta <= thresh) | both_null
     else:
         equal = (l_norm == r_norm) | both_null
 
-    mismatch_pct = float((~equal & ~only_one_null).mean() * 100 + only_one_null.mean() * 100)
+    mismatch_pct = float(
+        (~equal & ~only_one_null).mean() * 100 + only_one_null.mean() * 100
+    )
 
     # Capture top 5 disagreeing value pairs for debugging.
     if mismatch_pct > 0:
-        disagreement = pd.DataFrame({"l": l, "r": r})[~equal]
+        disagreement = pd.DataFrame({"l": left, "r": r})[~equal]
         try:
             top = (
                 disagreement.fillna("<null>")
@@ -364,7 +377,7 @@ def _compare_column(name: str, l, r, *, tolerance: float, numeric_tol: NumericTo
     )
 
 
-def _coerce_pair(l, r):
+def _coerce_pair(left, r):
     """Best-effort numeric coercion when one side is string-y digits."""
     import pandas as pd
 
@@ -377,7 +390,7 @@ def _coerce_pair(l, r):
             pass
         return s
 
-    return to_num(l), to_num(r)
+    return to_num(left), to_num(r)
 
 
 def _is_numeric_like(s) -> bool:
@@ -394,7 +407,7 @@ def _normalise_key(series):
         if getattr(series.dt, "tz", None) is not None:
             series = series.dt.tz_convert(None)
         return series.dt.date
-    if series.dtype == object and len(series) and isinstance(series.iloc[0], (str,)):
+    if series.dtype == object and len(series) and isinstance(series.iloc[0], str):
         # Try parsing dates encoded as strings.
         parsed = pd.to_datetime(series, errors="coerce")
         if parsed.notna().mean() > 0.95:

@@ -354,12 +354,12 @@ def _jdbc_partition_options(
     # make Spark's JDBC reader reject it ("partition column ... string found").
     column: str | None = None
     for schema_field in schema.fields:
-        if isinstance(schema_field.dataType, (TimestampType, DateType)):
+        if isinstance(schema_field.dataType, TimestampType | DateType):
             column = schema_field.name
             break
     if column is None:
         for schema_field in schema.fields:
-            if isinstance(schema_field.dataType, (LongType, IntegerType)):
+            if isinstance(schema_field.dataType, LongType | IntegerType):
                 column = schema_field.name
                 break
     if column is None:
