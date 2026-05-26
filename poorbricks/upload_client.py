@@ -95,9 +95,14 @@ def _build_tarball(*, tables_dir: Path, workflows_dir: Path) -> bytes:
     return buf.getvalue()
 
 
+_SKIP_DIRS = frozenset({"__pycache__", ".venv", "venv", ".pytest_cache", ".mypy_cache", "node_modules", ".git", ".ruff_cache"})
+
+
 def _skip_pycache(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
     parts = Path(tarinfo.name).parts
-    if "__pycache__" in parts or any(p.endswith(".pyc") for p in parts):
+    if any(p in _SKIP_DIRS for p in parts) or any(
+        p.endswith((".pyc", ".pyo", ".egg-info")) for p in parts
+    ):
         return None
     return tarinfo
 

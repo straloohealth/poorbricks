@@ -376,6 +376,37 @@ def _handle_upload(
                 phases=trail(),
             )
 
+        # Source-file presence gate — defence in depth on top of
+        # verify_local. Catches the 2026-05-25 ghost-contract failure
+        # mode where source files were deleted in a repo, an upload
+        # succeeded with no producers, contracts persisted in Mongo,
+        # and every downstream consumer silently read empty rows.
+        #
+        # Rule: every silver/gold transform.py the upload claims to
+        # publish must exist on disk as a non-empty file. verify_local
+        # checks schema-shape; this adds the simpler "the file is
+        # actually there" check that wasn't enforced before.
+        begin("source_presence_gate")
+        missing_sources = []
+        empty_sources = []
+        for tdir in tables_dir.rglob("config.py"):
+            tname = tdir.parent.name
+            transform_path = tdir.parent / "transform.py"
+            if not transform_path.exists():
+                missing_sources.append({"table": tname, "path": str(transform_path)})
+                continue
+            if transform_path.stat().st_size == 0:
+                empty_sources.append({"table": tname, "path": str(transform_path)})
+        if missing_sources or empty_sources:
+            return _fail(
+                "source_presence_gate failed: tarball would publish ghost contracts",
+                errors={
+                    "missing_transform_files": missing_sources,
+                    "empty_transform_files": empty_sources,
+                },
+                phases=trail(),
+            )
+
         begin("parsing_workflows")
         try:
             workflows = load_workflows(workflows_dir)

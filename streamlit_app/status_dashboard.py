@@ -69,6 +69,7 @@ def render() -> None:
         )
 
     _render_sync_freshness(contracts)
+    _render_contract_catalog(contracts)
 
 
 def _render_metrics(
@@ -204,3 +205,57 @@ def _stale_contracts(
         if age is not None and age > STALE_SYNC_HOURS:
             stale.append((contract.get("table_name", "?"), age))
     return stale
+
+
+def _render_contract_catalog(contracts: list[dict[str, Any]]) -> None:
+    """Sortable per-row catalog of every published contract.
+
+    Surfaces level, storage, last `pushed_at`, age, row count, and comment.
+    Complements the histogram above by giving an at-a-glance, sortable
+    table for spelunking individual table freshness.
+    """
+    st.markdown("### Contract catalog")
+    if not contracts:
+        st.info("No contracts available.")
+        return
+
+    rows: list[dict[str, Any]] = []
+    for contract in contracts:
+        profile = contract.get("profile") or {}
+        age = hours_since(contract.get("pushed_at"))
+        rows.append(
+            {
+                "table": contract.get("table_name", "?"),
+                "level": contract.get("level"),
+                "storage": contract.get("storage"),
+                "pushed_at": contract.get("pushed_at"),
+                "age (h)": round(age, 1) if age is not None else None,
+                "rows": profile.get("row_count"),
+                "comment": contract.get("comment"),
+            }
+        )
+    df = pd.DataFrame(rows).sort_values(
+        "age (h)", ascending=False, na_position="last"
+    )
+
+    by_level = df.groupby("level", dropna=False).size().to_dict()
+    cols = st.columns(4)
+    cols[0].metric("Contracts", len(df))
+    cols[1].metric(
+        "bronze / silver / gold",
+        f"{by_level.get('bronze', 0)} / {by_level.get('silver', 0)} / {by_level.get('gold', 0)}",
+    )
+    oldest = df.iloc[0] if not df.empty else None
+    cols[2].metric(
+        "Oldest table",
+        str(oldest["table"]) if oldest is not None else "—",
+        f"{oldest['age (h)']:.1f}h" if oldest is not None and oldest["age (h)"] is not None else None,
+        delta_color="inverse",
+    )
+    most_recent = df["pushed_at"].dropna().max() if "pushed_at" in df else None
+    cols[3].metric(
+        "Most recent push",
+        most_recent.strftime("%Y-%m-%d %H:%M") if most_recent is not None else "—",
+    )
+
+    st.dataframe(df, hide_index=True, use_container_width=True)
