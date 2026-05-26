@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # than RAM by partitioning reads, spilling shuffles to disk, and streaming
     # writes — never collecting a whole dataset into the driver.
     spark_master: str = "local[*]"  # all cores; the test suite bounds this
-    spark_driver_memory: str = "2g"
+    spark_driver_memory: str = "6g"
     spark_local_dir: str | None = None  # scratch dir for shuffle/sort spill
     read_partitions: int = 64  # partitioned Mongo / JDBC reads — small chunks
 

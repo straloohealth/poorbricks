@@ -43,7 +43,7 @@ _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _WORKER_CPU_REQUEST = "1"
 _WORKER_CPU_LIMIT = "4"
 _WORKER_MEMORY_REQUEST = "2Gi"
-_WORKER_MEMORY_LIMIT = "8Gi"
+_WORKER_MEMORY_LIMIT = "12Gi"
 
 
 def generate_dag_file(
@@ -282,7 +282,7 @@ def _render_volumes_and_env() -> str:
             # task threads as the pod is allowed to burst to (instead of
             # guessing from cgroups). Under contention CFS throttles them.
             k8s.V1EnvVar(name="SPARK_MASTER", value="local[__WORKER_CPU_LIMIT__]"),
-            k8s.V1EnvVar(name="SPARK_DRIVER_MEMORY", value="4g"),
+            k8s.V1EnvVar(name="SPARK_DRIVER_MEMORY", value="8g"),
             k8s.V1EnvVar(
                 name="POSTGRES_USER",
                 value_from=k8s.V1EnvVarSource(
