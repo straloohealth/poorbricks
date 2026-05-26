@@ -218,9 +218,9 @@ def test_arch_check_catches_malformed_pipeline() -> None:
         f"All errors: {[e.format() for e in errors]}"
     )
     messages = " ".join(e.message for e in malformed)
-    assert (
-        "fixtures.py" in messages or "transform.py" in messages
-    ), f"Expected missing file message, got: {messages}"
+    assert "fixtures.py" in messages or "transform.py" in messages, (
+        f"Expected missing file message, got: {messages}"
+    )
 
 
 def test_arch_check_passes_for_well_formed_pipelines() -> None:

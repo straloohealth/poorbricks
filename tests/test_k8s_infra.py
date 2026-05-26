@@ -59,9 +59,9 @@ class TestAirflowComponents:
             if "scheduler" in p["metadata"]["name"].lower()
         ]
         assert len(scheduler_pods) > 0, "No scheduler pod found in airflow namespace"
-        assert (
-            scheduler_pods[0]["status"]["phase"] == "Running"
-        ), "Scheduler pod is not Running"
+        assert scheduler_pods[0]["status"]["phase"] == "Running", (
+            "Scheduler pod is not Running"
+        )
 
     def test_api_server_pod_running(self) -> None:
         """Airflow API server pod must be in Running state."""
@@ -72,9 +72,9 @@ class TestAirflowComponents:
             if "api-server" in p["metadata"]["name"].lower()
         ]
         assert len(api_pods) > 0, "No api-server pod found in airflow namespace"
-        assert (
-            api_pods[0]["status"]["phase"] == "Running"
-        ), "API server pod is not Running"
+        assert api_pods[0]["status"]["phase"] == "Running", (
+            "API server pod is not Running"
+        )
 
     def test_dag_processor_pod_running(self) -> None:
         """Airflow dag-processor pod must be in Running state."""
@@ -85,9 +85,9 @@ class TestAirflowComponents:
             if "dag-processor" in p["metadata"]["name"].lower()
         ]
         assert len(dag_proc_pods) > 0, "No dag-processor pod found in airflow namespace"
-        assert (
-            dag_proc_pods[0]["status"]["phase"] == "Running"
-        ), "Dag-processor pod is not Running"
+        assert dag_proc_pods[0]["status"]["phase"] == "Running", (
+            "Dag-processor pod is not Running"
+        )
 
 
 @pytest.mark.k8s_e2e
@@ -136,9 +136,9 @@ class TestPoorbricksAPI:
             if "poorbricks-server" in p["metadata"]["name"]
         ]
         assert len(api_pods) > 0, "No poorbricks-server pod found in airflow namespace"
-        assert (
-            api_pods[0]["status"]["phase"] == "Running"
-        ), "poorbricks-server pod is not Running"
+        assert api_pods[0]["status"]["phase"] == "Running", (
+            "poorbricks-server pod is not Running"
+        )
 
 
 @pytest.mark.k8s_e2e
@@ -173,9 +173,9 @@ class TestMongoDatabase:
             p for p in pods.get("items", []) if "mongo" in p["metadata"]["name"].lower()
         ]
         assert len(mongo_pods) > 0, "No MongoDB pod found in airflow namespace"
-        assert (
-            mongo_pods[0]["status"]["phase"] == "Running"
-        ), "MongoDB pod is not Running"
+        assert mongo_pods[0]["status"]["phase"] == "Running", (
+            "MongoDB pod is not Running"
+        )
 
 
 __all__: list[str] = []
