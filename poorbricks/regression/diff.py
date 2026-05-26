@@ -311,8 +311,13 @@ class MigrationDiff:
 
 
 def _compare_column(
-    name: str, left, r, *, tolerance: float, numeric_tol: NumericTolerance | None
-):
+    name: str,
+    left: Any,
+    r: Any,
+    *,
+    tolerance: float,
+    numeric_tol: NumericTolerance | None,
+) -> ColumnDiff:
     """Score one column. Returns a ColumnDiff."""
     import pandas as pd
 
@@ -377,11 +382,11 @@ def _compare_column(
     )
 
 
-def _coerce_pair(left, r):
+def _coerce_pair(left: Any, r: Any) -> tuple[Any, Any]:
     """Best-effort numeric coercion when one side is string-y digits."""
     import pandas as pd
 
-    def to_num(s):
+    def to_num(s: Any) -> Any:
         try:
             converted = pd.to_numeric(s, errors="coerce")
             if converted.notna().sum() >= s.notna().sum() * 0.9:
@@ -393,13 +398,13 @@ def _coerce_pair(left, r):
     return to_num(left), to_num(r)
 
 
-def _is_numeric_like(s) -> bool:
+def _is_numeric_like(s: Any) -> bool:
     import pandas as pd
 
     return pd.api.types.is_numeric_dtype(s)
 
 
-def _normalise_key(series):
+def _normalise_key(series: Any) -> Any:
     """Coerce a join-key column to a comparable form (date for datetimes)."""
     import pandas as pd
 

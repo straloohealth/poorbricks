@@ -18,7 +18,7 @@ class Source(ABC):
     """Anything that produces a ``pd.DataFrame`` when ``load()`` is called."""
 
     @abstractmethod
-    def load(self):  # -> pd.DataFrame
+    def load(self) -> Any:  # -> pd.DataFrame
         """Materialise the source as a pandas DataFrame."""
 
 
@@ -37,11 +37,11 @@ class MongoSource(Source):
     projection: dict[str, int] | None = None
     limit: int | None = None
 
-    def load(self):
+    def load(self) -> Any:
         import pandas as pd
         from pymongo import MongoClient
 
-        client = MongoClient(self.uri)
+        client: Any = MongoClient(self.uri)
         cursor = client[self.db][self.collection].find(
             self.query or {},
             self.projection if self.projection is not None else {"_id": 0},
@@ -59,7 +59,7 @@ class PostgresSource(Source):
     sql: str
     params: tuple[Any, ...] | dict[str, Any] | None = None
 
-    def load(self):
+    def load(self) -> Any:
         import pandas as pd
         import psycopg2
 
@@ -76,7 +76,7 @@ class ParquetSource(Source):
 
     path: Path | str
 
-    def load(self):
+    def load(self) -> Any:
         import pandas as pd
 
         return pd.read_parquet(self.path)
@@ -88,5 +88,5 @@ class DataFrameSource(Source):
 
     df: Any  # pd.DataFrame; loose-typed so importers don't need pandas at class time
 
-    def load(self):
+    def load(self) -> Any:
         return self.df.copy()

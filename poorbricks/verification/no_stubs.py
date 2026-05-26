@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,7 +115,7 @@ def _alias_target(node: ast.AST) -> tuple[ast.AST, str] | None:
     return None
 
 
-def _walk_chain(node: ast.AST):
+def _walk_chain(node: ast.AST) -> Iterator[ast.Call]:
     """Yield the chain of nested Call.func.value nodes (the LHS of method chains)."""
     cur = node
     while isinstance(cur, ast.Call) and isinstance(cur.func, ast.Attribute):
@@ -141,6 +142,7 @@ def find_stubs_in(transform_path: Path) -> list[StubFinding]:
         target = _alias_target(node)
         if target is None:
             continue
+        assert isinstance(node, ast.Call)  # narrowed by _alias_target
         inner, col_name = target
         if col_name not in schema_cols:
             continue

@@ -19,6 +19,7 @@ why no detail is available.
 
 from __future__ import annotations
 
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -28,7 +29,7 @@ from datetime import UTC, datetime
 from json import JSONDecodeError
 from json import dumps as _json_dumps
 from json import loads as _json_loads
-from typing import Any
+from typing import Any, cast
 
 TERMINAL_STATES = frozenset({"success", "failed", "skipped", "upstream_failed"})
 """DAG/task states that mean polling can stop."""
@@ -131,7 +132,7 @@ def trigger_dag_run(
     url = f"{airflow_url.rstrip('/')}/api/v2/dags/{urllib.parse.quote(dag_id, safe='')}/dagRuns"
     status, text = _request("POST", url, body={"logical_date": iso}, timeout=timeout)
     body = _json_or_raise(status, text, f"trigger {dag_id}")
-    return body["dag_run_id"]
+    return cast(str, body["dag_run_id"])
 
 
 # ---- Polling ---------------------------------------------------------------
@@ -144,7 +145,9 @@ def _get_run(airflow_url: str, dag_id: str, run_id: str) -> dict[str, Any]:
         f"{urllib.parse.quote(run_id, safe='')}"
     )
     status, text = _request("GET", url)
-    return _json_or_raise(status, text, f"get-run {dag_id}/{run_id}")
+    return cast(
+        "dict[str, Any]", _json_or_raise(status, text, f"get-run {dag_id}/{run_id}")
+    )
 
 
 def _list_task_instances(
@@ -157,7 +160,7 @@ def _list_task_instances(
     )
     status, text = _request("GET", url)
     body = _json_or_raise(status, text, f"list-tis {dag_id}/{run_id}")
-    return body.get("task_instances", [])
+    return cast("list[dict[str, Any]]", body.get("task_instances", []))
 
 
 def poll_run(
@@ -330,7 +333,7 @@ def extract_log_errors(lines: list[str], *, max_errors: int = 30) -> list[str]:
     return keep[:max_errors]
 
 
-_POD_NAME_INVALID = __import__("re").compile(r"[^a-z0-9]+")
+_POD_NAME_INVALID = re.compile(r"[^a-z0-9]+")
 
 
 def _sanitize_for_pod_name(name: str) -> str:
