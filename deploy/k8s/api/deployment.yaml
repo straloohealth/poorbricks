@@ -5,6 +5,12 @@ metadata:
   namespace: airflow
   labels:
     app: poorbricks-server
+  annotations:
+    # Restart this Deployment when any Secret it mounts (e.g. the VSO-managed
+    # poorbricks-server-mongodb-creds / poorbricks-server-postgresql-creds)
+    # is rotated by Vault. Without this the pod keeps a revoked credential
+    # in its env and crashes on the next DB connection attempt.
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
   selector:
