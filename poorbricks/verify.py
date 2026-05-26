@@ -213,20 +213,13 @@ class MongoCheckError:
         return "\n".join(parts)
 
 
-def _public_uri(mongo_uri: str) -> str:
-    """Strip the Atlas private-peering suffix (-pri) so the public endpoint is used."""
-    return mongo_uri.replace("-pri.", ".")
-
-
 def _sample_mongo_collection(
     mongo_uri: str, db: str, collection: str, sample_size: int = 100
 ) -> list[dict[str, Any]]:
     """Return up to sample_size oldest + sample_size newest docs, deduplicated."""
     import pymongo
 
-    client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(
-        _public_uri(mongo_uri)
-    )
+    client: pymongo.MongoClient[dict[str, Any]] = pymongo.MongoClient(mongo_uri)
     coll = client[db][collection]
     oldest = list(coll.find({}, limit=sample_size).sort("_id", pymongo.ASCENDING))
     newest = list(coll.find({}, limit=sample_size).sort("_id", pymongo.DESCENDING))

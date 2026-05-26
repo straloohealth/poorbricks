@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from utils.mongo_sample import EmptyCollectionError, _public_uri, sample_random_docs
+from utils.mongo_sample import EmptyCollectionError, sample_random_docs
 
 
 class _FakeCollection:
@@ -62,9 +62,3 @@ def test_empty_collection_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_client(monkeypatch, [])
     with pytest.raises(EmptyCollectionError):
         sample_random_docs("mongodb://x", "db", "coll", sample_size=10)
-
-
-def test_public_uri_strips_private_peering_suffix() -> None:
-    assert _public_uri("mongodb+srv://host-pri.mongodb.net/") == (
-        "mongodb+srv://host.mongodb.net/"
-    )
