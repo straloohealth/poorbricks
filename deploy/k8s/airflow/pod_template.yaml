@@ -4,6 +4,13 @@ metadata:
   name: airflow-worker
 spec:
   serviceAccountName: airflow
+  nodeSelector:
+    cloud.google.com/gke-nodepool: spot
+  tolerations:
+  - key: spot
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
   containers:
     - name: base
       volumeMounts:
