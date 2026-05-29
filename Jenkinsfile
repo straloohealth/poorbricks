@@ -115,6 +115,7 @@ pipeline {
       when { anyOf { branch 'main'; branch 'ci/jenkins' } }
       parallel {
         stage('publish-python-package') {
+          when { expression { return false } }  // HELD: poorbricks publish paused (work in progress)
           agent { kubernetes { yaml podTemplates.gke() } }
           options { retry(count: 3, conditions: [agent()]) }
           steps { checkout scm; publishPythonPackage() }
@@ -129,7 +130,7 @@ pipeline {
     }
 
     stage('deploy') {
-      when { anyOf { branch 'main'; branch 'ci/jenkins' } }
+      when { expression { return false } }  // HELD: poorbricks deploys paused per request (work in progress) — restore to `anyOf { branch 'main'; branch 'ci/jenkins' }`
       parallel {
         stage('deploy-api') {
           agent { kubernetes { yaml podTemplates.gke() } }
