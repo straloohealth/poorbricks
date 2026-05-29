@@ -87,3 +87,4 @@ button.btn.active { background: var(--info); color: #fff; border-color: var(--in
 .tooltip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.78rem; max-width: 260px; }
 select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.5rem; font-size: 0.82rem; }
 h2 a, .panel a { text-decoration: underline; }
+.stacktrace { background: #0b0f17; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.8rem; margin-top: 0.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.74rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; max-height: 460px; overflow: auto; color: #cbd5e1; }

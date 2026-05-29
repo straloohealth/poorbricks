@@ -6,6 +6,7 @@ import {
   tableOf,
   type Contract,
   type RunRecord,
+  type SourceFiles,
   type TableSnapshot,
 } from "@/lib/api";
 
@@ -20,6 +21,8 @@ export function TableDetail({
   const [contractLoaded, setContractLoaded] = useState(false);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [snap, setSnap] = useState<TableSnapshot | null>(null);
+  const [source, setSource] = useState<SourceFiles | null>(null);
+  const [openFile, setOpenFile] = useState<string | null>(null);
   // "na" = table has no Postgres materialisation (e.g. a Mongo upstream node).
   const [preview, setPreview] = useState<"loading" | "ok" | "na" | "missing">("loading");
 
@@ -34,11 +37,18 @@ export function TableDetail({
     setContractLoaded(false);
     setRuns([]);
     setSnap(null);
+    setSource(null);
+    setOpenFile(null);
     setPreview("loading");
     api
       .contract(table)
       .then((c) => !ignore && (setContract(c), setContractLoaded(true)))
       .catch(() => !ignore && (setContract(null), setContractLoaded(true)));
+    // Original repo source (transform/pipeline/config) for debugging.
+    api
+      .source(table)
+      .then((s) => !ignore && setSource(s))
+      .catch(() => !ignore && setSource(null));
     api
       .runs(300)
       .then((all) => !ignore && setRuns(all.filter((r) => tableOf(r.pipeline_key) === table)))
@@ -157,6 +167,29 @@ export function TableDetail({
             </p>
           )}
         </>
+      )}
+
+      {source && Object.keys(source.files).length > 0 && (
+        <div data-cy="source">
+          <h3>Source (as written in the repo)</h3>
+          <div className="rowflex">
+            {Object.keys(source.files).map((f) => (
+              <button
+                key={f}
+                className={`btn ${openFile === f ? "active" : ""}`}
+                data-cy="source-file-btn"
+                onClick={() => setOpenFile(openFile === f ? null : f)}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          {openFile && source.files[openFile] && (
+            <pre className="stacktrace" data-cy="source-code">
+              {source.files[openFile]}
+            </pre>
+          )}
+        </div>
       )}
 
       <h3>Previous runs</h3>
