@@ -16,7 +16,7 @@ pipeline {
     stage('test') {
       parallel {
         stage('lint-and-type-check') {
-          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', cpu: '1', memory: '2Gi', memoryLimit: '4Gi') } }
+          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', cpu: '500m', memory: '1Gi', memoryLimit: '4Gi') } }
           options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
@@ -29,7 +29,7 @@ pipeline {
           }
         }
         stage('tests') {
-          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '2', memory: '4Gi', memoryLimit: '8Gi') } }
+          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '8Gi') } }
           options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
@@ -46,7 +46,7 @@ pipeline {
           }
         }
         stage('multi-repo-tests') {
-          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '2', memory: '4Gi', memoryLimit: '8Gi') } }
+          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '8Gi') } }
           options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
@@ -61,7 +61,7 @@ pipeline {
           }
         }
         stage('build-and-smoke') {
-          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '2', memory: '6Gi', memoryLimit: '12Gi') } }
+          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '12Gi') } }
           options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
@@ -77,7 +77,7 @@ pipeline {
           }
         }
         stage('integration-tests') {
-          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '2', memory: '6Gi', memoryLimit: '12Gi') } }
+          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '12Gi') } }
           options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
@@ -93,7 +93,7 @@ pipeline {
           }
         }
         stage('workflow-compilation-tests') {
-          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', cpu: '1', memory: '2Gi', memoryLimit: '4Gi') } }
+          agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', cpu: '500m', memory: '1Gi', memoryLimit: '4Gi') } }
           options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
