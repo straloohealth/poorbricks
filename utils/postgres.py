@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import random
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import chain
-from typing import Any
+from typing import Any, cast
 
 import psycopg2
 import psycopg2.extras
@@ -92,6 +94,37 @@ class _RowCopyReader:
         return chunk
 
 
+_CONN_RETRY_ATTEMPTS = 7
+_SATURATION_MARKERS = (
+    "too many clients",
+    "remaining connection slots",
+)
+
+
+def _connect_with_retry(**conn_params: Any) -> psycopg2.extensions.connection:
+    """``psycopg2.connect`` that backs off and retries when Postgres is at its
+    connection limit.
+
+    Many pipelines writing concurrently (each opening one connection per Spark
+    write slot) can transiently exhaust ``max_connections``. Rather than fail
+    the run, a saturated connect waits with exponential backoff + jitter and
+    retries — the write is idempotent (staging + atomic swap), so an eventual
+    success is safe. Non-saturation errors (bad creds, host down) raise at once.
+    Runs on both the driver and Spark executors.
+    """
+    last: Exception | None = None
+    for attempt in range(_CONN_RETRY_ATTEMPTS):
+        try:
+            return cast(psycopg2.extensions.connection, psycopg2.connect(**conn_params))
+        except psycopg2.OperationalError as exc:
+            if not any(m in str(exc).lower() for m in _SATURATION_MARKERS):
+                raise
+            last = exc
+            time.sleep(min(2**attempt, 20) + random.random())
+    assert last is not None
+    raise last
+
+
 def _partition_copy_writer(
     conn_params: dict[str, Any], copy_sql: str, columns: list[str]
 ) -> Callable[[Iterator[Any]], None]:
@@ -103,18 +136,19 @@ def _partition_copy_writer(
     """
 
     def _write_partition(rows: Iterator[Any]) -> None:
-        import psycopg2
 
         iterator = iter(rows)
         try:
             first = next(iterator)
         except StopIteration:
             return  # empty partition — skip the connection entirely
-        conn = psycopg2.connect(**conn_params)
+        conn = _connect_with_retry(**conn_params)
         try:
             with conn.cursor() as cur:
                 reader = _RowCopyReader(chain([first], iterator), columns)
-                cur.copy_expert(copy_sql, reader)
+                # _RowCopyReader is a valid text file-like (copy_expert only
+                # calls .read()); the psycopg2 stub's type is over-strict.
+                cur.copy_expert(copy_sql, reader)  # type: ignore[arg-type]
             conn.commit()
         finally:
             conn.close()
@@ -157,12 +191,13 @@ class PostgresLoader:
         self.password = password or settings.postgres_password
 
     def _connect(self) -> psycopg2.extensions.connection:
-        return psycopg2.connect(
+        return _connect_with_retry(
             host=self.host,
             port=self.port,
             database=self.db,
             user=self.user,
             password=self.password,
+            connect_timeout=30,
         )
 
     def ensure_schema(self, schema_name: str) -> None:
@@ -233,6 +268,7 @@ class PostgresLoader:
             "dbname": self.db,
             "user": self.user,
             "password": self.password,
+            "connect_timeout": 30,
         }
 
         # 1. Driver: ensure the schema and a fresh, empty staging table.
@@ -375,12 +411,13 @@ class PostgresInspector:
         self.password = password or settings.postgres_password
 
     def _connect(self) -> psycopg2.extensions.connection:
-        return psycopg2.connect(
+        return _connect_with_retry(
             host=self.host,
             port=self.port,
             database=self.db,
             user=self.user,
             password=self.password,
+            connect_timeout=30,
         )
 
     def _columns_by_table(
