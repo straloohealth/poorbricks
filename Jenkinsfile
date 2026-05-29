@@ -10,14 +10,16 @@
 // (public PyPI only — poorbricks-framework lives here, no Artifact Registry).
 pipeline {
   agent none
-  options { timestamps(); disableConcurrentBuilds(); buildDiscarder(logRotator(numToKeepStr: '30')) }
+  options {
+    disableConcurrentBuilds()
+    retry(count: 2, conditions: [agent()])   // retry only on agent loss (spot eviction), not real failures
+  }
 
   stages {
     stage('test') {
       parallel {
         stage('lint-and-type-check') {
           agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', cpu: '500m', memory: '1Gi', memoryLimit: '4Gi') } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
             installPythonDeps(privateRegistry: false)
@@ -30,7 +32,6 @@ pipeline {
         }
         stage('tests') {
           agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '8Gi') } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
             installPythonDeps(privateRegistry: false)
@@ -47,7 +48,6 @@ pipeline {
         }
         stage('multi-repo-tests') {
           agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '8Gi') } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
             installPythonDeps(privateRegistry: false)
@@ -62,7 +62,6 @@ pipeline {
         }
         stage('build-and-smoke') {
           agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '12Gi') } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
             installPythonDeps(privateRegistry: false)
@@ -78,7 +77,6 @@ pipeline {
         }
         stage('integration-tests') {
           agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', mongo: true, postgres: true, databaseImage: 'mongo:7', cpu: '1', memory: '2Gi', memoryLimit: '12Gi') } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
             installPythonDeps(privateRegistry: false)
@@ -94,7 +92,6 @@ pipeline {
         }
         stage('workflow-compilation-tests') {
           agent { kubernetes { yaml podTemplates.python(image: 'docker.io/danielspeixoto/databricks', cpu: '500m', memory: '1Gi', memoryLimit: '4Gi') } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps {
             checkout scm
             installPythonDeps(privateRegistry: false)
@@ -117,13 +114,11 @@ pipeline {
         stage('publish-python-package') {
           when { expression { return false } }  // HELD: poorbricks publish paused (work in progress)
           agent { kubernetes { yaml podTemplates.gke() } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps { checkout scm; publishPythonPackage() }
           post { failure { container('gke') { notifySlack(event: 'fail') } } }
         }
         stage('build-docker') {
           agent { kubernetes { yaml podTemplates.kaniko() } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps { checkout scm; buildDocker(image: 'poorbricks/api', dockerfile: 'api/Dockerfile') }
         }
       }
@@ -134,13 +129,11 @@ pipeline {
       parallel {
         stage('deploy-api') {
           agent { kubernetes { yaml podTemplates.gke() } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps { checkout scm; deployK8s(appName: 'poorbricks-api', kubernetesDirectory: 'deploy/k8s/api', canary: false, generateK8sConfig: false) }
           post { failure { container('gke') { notifySlack(event: 'fail') } } }
         }
         stage('deploy-streamlit') {
           agent { kubernetes { yaml podTemplates.gke() } }
-          options { retry(count: 3, conditions: [agent()]) }
           steps { checkout scm; deployK8s(appName: 'poorbricks-streamlit', kubernetesDirectory: 'deploy/k8s/streamlit', canary: false, generateK8sConfig: false) }
           post { failure { container('gke') { notifySlack(event: 'fail') } } }
         }
