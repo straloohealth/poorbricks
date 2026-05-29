@@ -31,6 +31,14 @@ class ApiSettings(BaseSettings):
     worker_namespace: str = DEFAULT_NAMESPACE
     runtime_secret_name: str = DEFAULT_RUNTIME_SECRET_NAME
 
+    # Gate for PROD uploads (POST /v1/upload environment=prod). When set (via the
+    # Vault-managed runtime Secret as POORBRICKS_API_PROD_DEPLOY_TOKEN), a prod
+    # upload must present a matching X-Poorbricks-Deploy-Token header — only the
+    # CI deploy workflow holds it. Empty (default) ⇒ gate DISABLED (fail-open),
+    # so existing flows keep working until the token is provisioned. Dev uploads
+    # are never gated. No secret value lives in code — env-injected only.
+    prod_deploy_token: str = ""
+
     code_pvc_claim: str = "airflow-dags"
     code_pvc_root: str = "__code__"
 

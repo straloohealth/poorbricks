@@ -16,6 +16,7 @@ Tailscale HTTP proxy.
 
 from __future__ import annotations
 
+import hmac
 import io
 import json
 import re
@@ -30,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -572,12 +573,31 @@ def table_preview_endpoint(schema: str, name: str, limit: int = 50) -> dict[str,
     return asdict(snapshot)
 
 
+def _prod_upload_authorized(
+    environment: str, expected: str, presented: str | None
+) -> bool:
+    """Authorize a prod upload against the CI-only deploy token.
+
+    Dev uploads are always allowed (developer self-service). Prod uploads are
+    allowed when the gate is disabled (``expected`` empty — fail-open until the
+    token is provisioned) OR when the presented token matches in constant time.
+    """
+    if environment != "prod":
+        return True
+    if not expected:  # gate disabled (token not provisioned) — fail open
+        return True
+    if not presented:
+        return False
+    return hmac.compare_digest(presented, expected)
+
+
 @app.post("/v1/upload")
 async def upload(
     prefix: str = Form(...),
     sha: str = Form(...),
     code: UploadFile = File(...),
     environment: str = Form("prod"),
+    x_poorbricks_deploy_token: str | None = Header(default=None),
 ) -> JSONResponse:
     _validate_prefix(prefix)
     _validate_sha(sha)
@@ -585,6 +605,17 @@ async def upload(
         raise HTTPException(
             status_code=400,
             detail=f"environment must be 'prod' or 'dev', got {environment!r}",
+        )
+    # Prod deploys are CI-only when a deploy token is configured; dev is open.
+    if not _prod_upload_authorized(
+        environment, settings.prod_deploy_token, x_poorbricks_deploy_token
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "prod uploads require a valid X-Poorbricks-Deploy-Token "
+                "(CI deploy workflow only); use --env dev for local/dev uploads"
+            ),
         )
     if not _upload_lock.acquire(blocking=False):
         return JSONResponse(
