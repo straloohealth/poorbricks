@@ -169,6 +169,38 @@ def delete_contract(table_name: str) -> bool:
     return result.deleted_count > 0
 
 
+def set_field_descriptions(
+    table_name: str, descriptions: dict[str, str], overwrite: bool = False
+) -> int:
+    """Attach human/LLM-readable field descriptions to a contract.
+
+    Fills ``fields[].description`` for matching columns (only where empty unless
+    ``overwrite``) and mirrors everything into a top-level ``field_descriptions``
+    map so cosmo/LLMs can read intent straight from the contract. Additive and
+    back-compatible — never removes existing data. Returns the count applied.
+    """
+    from poorbricks.settings import settings
+
+    coll = _client()[settings.contracts_db][settings.contracts_collection]
+    doc = coll.find_one({"_id": table_name}) or coll.find_one({"table_name": table_name})
+    if not doc:
+        return 0
+    fields = doc.get("fields") or []
+    applied = 0
+    for f in fields:
+        name = f.get("name")
+        if name in descriptions and (overwrite or not f.get("description")):
+            f["description"] = descriptions[name]
+            applied += 1
+    fd = dict(doc.get("field_descriptions") or {})
+    fd.update(descriptions)
+    coll.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"fields": fields, "field_descriptions": fd}},
+    )
+    return applied
+
+
 def prune_contracts(prefix: str, keep: set[str]) -> list[str]:
     """Delete contracts owned by ``prefix`` whose table_name is not in ``keep``.
 

@@ -315,6 +315,27 @@ def source_endpoint(table_name: str) -> dict[str, Any]:
     }
 
 
+@app.post("/v1/contracts/{table_name}/descriptions")
+def set_descriptions_endpoint(
+    table_name: str, descriptions: dict[str, str]
+) -> dict[str, Any]:
+    """Attach human/LLM-readable field descriptions to a contract.
+
+    Body: ``{"<field>": "<description>", ...}``. Fills missing
+    ``fields[].description`` and a top-level ``field_descriptions`` map so cosmo
+    /LLMs can understand the columns. Additive — never overwrites existing.
+    """
+    from utils.contracts import fetch_contract_from_mongo, set_field_descriptions
+
+    applied = set_field_descriptions(table_name, descriptions)
+    if applied == 0:
+        try:
+            fetch_contract_from_mongo(table_name)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail=f"no contract for {table_name!r}")
+    return {"ok": True, "table_name": table_name, "applied": applied}
+
+
 @app.get("/v1/staleness")
 def staleness_endpoint() -> list[dict[str, Any]]:
     """Per-pipeline freshness verdicts (ok / overdue / missing) for the dashboard.
