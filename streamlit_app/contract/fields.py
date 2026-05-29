@@ -18,8 +18,19 @@ def render(contract: dict[str, Any]) -> None:
     df = pd.DataFrame(fields)
     if "nullable" in df.columns:
         df = df.assign(nullable=df["nullable"].map(_nullable_label))
+    if "is_literal" in df.columns:
+        df = df.assign(is_literal=df["is_literal"].fillna(False).map(bool))
 
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # Literal columns carry a constant value with no upstream source —
+    # informational, not an error (e.g. a constant flag or source tag).
+    literal_cols = [f["name"] for f in fields if f.get("is_literal")]
+    if literal_cols:
+        st.info(
+            "ℹ️ Literal columns (constant value, no upstream source): "
+            + ", ".join(f"`{c}`" for c in literal_cols)
+        )
 
 
 def validation_rules(contract: dict[str, Any]) -> None:

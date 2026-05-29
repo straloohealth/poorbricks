@@ -147,6 +147,39 @@ def test_workers_prefer_spot() -> None:
     assert "V1Toleration" in source
 
 
+def test_retries_enabled_by_default_and_tunable() -> None:
+    """Retries cover Spot evictions; prod defaults to 2, dev fast-fails at 0."""
+    wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
+    prod = generate_dag_file(wf, prefix="r", image="img")
+    ast.parse(prod)
+    assert '"retries": 2' in prod
+    assert "timedelta(minutes=2)" in prod
+    dev = generate_dag_file(
+        wf, prefix="dev-r", image="img", environment="dev", retries=0
+    )
+    ast.parse(dev)
+    assert '"retries": 0' in dev
+
+
+def test_dev_env_vars_rendered() -> None:
+    """A dev render injects the env tag + schema suffix the worker reads."""
+    wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
+    dev = generate_dag_file(
+        wf,
+        prefix="dev-r",
+        image="img",
+        environment="dev",
+        schema_suffix="__dev",
+        postgres_db="poorbricks_dev",
+    )
+    ast.parse(dev)
+    assert "ENVIRONMENT = 'dev'" in dev
+    assert "SCHEMA_SUFFIX = '__dev'" in dev
+    assert "POORBRICKS_ENV" in dev
+    assert "POORBRICKS_SCHEMA_SUFFIX" in dev
+    assert "POSTGRES_DB = 'poorbricks_dev'" in dev
+
+
 def test_no_node_selector() -> None:
     """Workers no longer pin to the poorbricks.io/dags node — that pinning
     only existed so the RWO code PVC could attach."""

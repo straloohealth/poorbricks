@@ -200,6 +200,95 @@ def find_stubs(tables_root: Path) -> list[StubFinding]:
     return out
 
 
+@dataclass
+class LiteralFinding:
+    """A schema column projected as a non-null constant ``f.lit(<value>)``.
+
+    Unlike a stub this is NOT an error — a literal column can be perfectly
+    legitimate (a constant flag, a source-system tag). It is surfaced as an
+    informational signal: flagged on the contract so the management UI can warn
+    that the column has no upstream source.
+    """
+
+    file: Path
+    line: int
+    column: str
+    literal_repr: str
+
+    def format(self) -> str:
+        return (
+            f"{self.file}:{self.line} column={self.column!r} "
+            f"— literal column f.lit({self.literal_repr})"
+        )
+
+
+def find_literals_in(transform_path: Path) -> list[LiteralFinding]:
+    """Scan a single ``transform.py`` for schema columns set to a literal.
+
+    Detects ``f.lit(<non-null constant>)...alias(<col>)`` where ``<col>`` is a
+    declared schema column. Excludes ``f.lit(None)`` (that is the stub-null
+    rule) and non-constant ``f.lit(...)`` arguments. No marker is required —
+    this is informational, not a gate.
+    """
+    if not transform_path.exists():
+        return []
+    schema_cols = _schema_columns_for(transform_path)
+    if not schema_cols:
+        return []
+    try:
+        tree = ast.parse(transform_path.read_text())
+    except SyntaxError:
+        return []
+
+    findings: list[LiteralFinding] = []
+    for node in ast.walk(tree):
+        target = _alias_target(node)
+        if target is None:
+            continue
+        assert isinstance(node, ast.Call)  # narrowed by _alias_target
+        inner, col_name = target
+        if col_name not in schema_cols:
+            continue
+        chain_node = inner
+        lit_call: ast.Call | None = None
+        while isinstance(chain_node, ast.Call) and isinstance(
+            chain_node.func, ast.Attribute
+        ):
+            if chain_node.func.attr == "lit":
+                lit_call = chain_node
+                break
+            chain_node = chain_node.func.value
+        if lit_call is None or not lit_call.args:
+            continue
+        lit_arg = lit_call.args[0]
+        # Only flag literal *constants* that are not None (None is the stub rule).
+        if isinstance(lit_arg, ast.Constant) and lit_arg.value is not None:
+            findings.append(
+                LiteralFinding(
+                    file=transform_path,
+                    line=node.lineno,
+                    column=col_name,
+                    literal_repr=repr(lit_arg.value),
+                )
+            )
+    return findings
+
+
+def find_literals(tables_root: Path) -> list[LiteralFinding]:
+    """Walk ``<tables_root>/**/transform.py`` and gather every literal column."""
+    out: list[LiteralFinding] = []
+    for path in tables_root.rglob("transform.py"):
+        if "__pycache__" in path.parts:
+            continue
+        out.extend(find_literals_in(path))
+    return out
+
+
+def literal_columns_for(transform_path: Path) -> set[str]:
+    """Return the set of schema columns produced by a literal in this transform."""
+    return {finding.column for finding in find_literals_in(transform_path)}
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     if not args:

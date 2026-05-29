@@ -34,6 +34,11 @@ def main(argv: list[str] | None = None) -> int:
         help="upload pipelines + workflows to a framework server",
         add_help=False,
     )
+    subparsers.add_parser(
+        "monitor-staleness",
+        help="alert on pipelines that stopped running (reads run history + DAGs)",
+        add_help=False,
+    )
 
     args = argv if argv is not None else sys.argv[1:]
     if not args or args[0] in {"-h", "--help"}:
@@ -59,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         from .upload_client import main as upload_main
 
         return upload_main(rest)
+    if command == "monitor-staleness":
+        from .staleness import main as staleness_main
+
+        return staleness_main(rest)
 
     parser.error(f"unknown command: {command!r}")  # noqa: ARG002
 

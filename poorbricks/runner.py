@@ -51,6 +51,9 @@ class RunResult:
     # Per-phase wall-clock seconds (spark_init_s, discovery_s, inputs_s,
     # compute_s, ...) — populated by run() / run_and_persist() for measurement.
     timings: dict[str, float] = field(default_factory=dict)
+    # Column-level lineage captured from the Spark analyzed plan in
+    # _execute_pipeline (best-effort; None when capture is unavailable).
+    lineage: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +478,19 @@ def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
         meta.model.verify(df, strict=True)  # type: ignore[attr-defined]
     except Exception as exc:
         errors.append(str(exc))
-    return RunResult(df=df, rows=df.count(), errors=errors)
+
+    # Capture column-level lineage from the analyzed plan (metadata only — no
+    # recompute). Best-effort: a capture failure must never fail the run.
+    lineage: dict[str, Any] | None = None
+    try:
+        from .lineage_runtime import capture_lineage, record_capture
+
+        lineage = capture_lineage(df, meta.inputs_cls)
+        record_capture(meta.table_name, lineage)
+    except Exception:  # noqa: BLE001 — lineage is advisory
+        lineage = None
+
+    return RunResult(df=df, rows=df.count(), errors=errors, lineage=lineage)
 
 
 # ---------------------------------------------------------------------------

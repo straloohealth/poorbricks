@@ -28,6 +28,50 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Local web-debug loop (opt-in: `docker-compose --profile dev up`) ------
+  # Brings up the poorbricks server + Streamlit against the compose Mongo /
+  # Postgres so you can preview dev runs without the cluster. Requires an image
+  # with the framework + deps installed (override via POORBRICKS_DEV_IMAGE).
+  api:
+    profiles: ["dev"]
+    image: ${POORBRICKS_DEV_IMAGE:-docker.io/danielspeixoto/databricks:latest}
+    working_dir: /app
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: analytics
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+      POORBRICKS_API_DAGS_DIR: /tmp/poorbricks-dags
+    volumes:
+      - .:/app
+    ports:
+      - "8080:8080"
+    depends_on:
+      mongo: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+
+  streamlit:
+    profiles: ["dev"]
+    image: ${POORBRICKS_DEV_IMAGE:-docker.io/danielspeixoto/databricks:latest}
+    working_dir: /app
+    command: streamlit run streamlit_app/app.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: analytics
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: analytics
+      POORBRICKS_API_URL: http://api:8080
+      CONTRACTS_API_URL: http://api:8080
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
 volumes:
   mongo_data:
   postgres_data:

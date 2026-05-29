@@ -30,6 +30,7 @@ from streamlit_app import (  # noqa: E402
     airflow_runs,
     cache,
     contract,
+    dev_debug,
     header,
     health,
     lineage,
@@ -92,6 +93,10 @@ def airflow_runs_page() -> None:
     airflow_runs.render()
 
 
+def dev_debug_page() -> None:
+    dev_debug.render()
+
+
 nav = st.navigation(
     [
         st.Page(
@@ -124,6 +129,11 @@ nav = st.navigation(
             airflow_runs_page,
             title="Airflow runs",
             icon=":material/event_repeat:",
+        ),
+        st.Page(
+            dev_debug_page,
+            title="Dev debug",
+            icon=":material/bug_report:",
         ),
     ]
 )

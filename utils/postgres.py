@@ -468,6 +468,47 @@ class PostgresInspector:
         finally:
             conn.close()
 
+    def sample_table(
+        self, schema_name: str, table_name: str, limit: int = 50
+    ) -> TableSnapshot:
+        """Snapshot a single table: row count, size, columns, and sample rows.
+
+        Used by the web-debug preview endpoint. The caller MUST validate
+        ``schema_name`` / ``table_name`` as plain identifiers — they are
+        interpolated into the query (psycopg2 cannot parameterize identifiers).
+        """
+        qualified = f'"{schema_name}"."{table_name}"'
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM {qualified}")
+                row_count = int(cur.fetchone()[0])  # type: ignore[index]
+                cur.execute(
+                    "SELECT pg_total_relation_size(%s::regclass)",
+                    (f"{schema_name}.{table_name}",),
+                )
+                size_bytes = int(cur.fetchone()[0])  # type: ignore[index]
+                columns = self._columns_by_table(cur).get((schema_name, table_name), [])
+
+                sample_rows: list[dict[str, Any]] = []
+                if row_count > 0 and limit > 0:
+                    cur.execute(
+                        f"SELECT * FROM {qualified} ORDER BY random() LIMIT %s",
+                        (limit,),
+                    )
+                    col_names = [d[0] for d in cur.description or []]
+                    sample_rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
+            return TableSnapshot(
+                schema=schema_name,
+                name=table_name,
+                row_count=row_count,
+                size_bytes=size_bytes,
+                columns=columns,
+                sample_rows=sample_rows,
+            )
+        finally:
+            conn.close()
+
     def server_info(self) -> dict[str, str]:
         conn = self._connect()
         try:

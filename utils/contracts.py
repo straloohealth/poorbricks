@@ -123,10 +123,40 @@ def list_contract_details() -> list[dict[str, Any]]:
             "comment": 1,
             "pushed_at": 1,
             "inputs": 1,
+            "prefix": 1,
+            "lineage.consumed": 1,
             "profile.row_count": 1,
         },
     )
     return list(cursor)
+
+
+def delete_contract(table_name: str) -> bool:
+    """Delete a single contract by table name. Returns True if one was removed."""
+    from poorbricks.settings import settings
+
+    result = _client()[settings.contracts_db][settings.contracts_collection].delete_one(
+        {"_id": table_name}
+    )
+    return result.deleted_count > 0
+
+
+def prune_contracts(prefix: str, keep: set[str]) -> list[str]:
+    """Delete contracts owned by ``prefix`` whose table_name is not in ``keep``.
+
+    Strictly scoped to ``{"prefix": prefix}`` so one repo's upload can never
+    remove another repo's contracts. The caller is responsible for including
+    any still-consumed tables in ``keep`` (the cross-repo safety guard).
+    Returns the sorted list of deleted table names.
+    """
+    from poorbricks.settings import settings
+
+    coll = _client()[settings.contracts_db][settings.contracts_collection]
+    owned = {doc["_id"] for doc in coll.find({"prefix": prefix}, {"_id": 1})}
+    to_delete = sorted(owned - keep)
+    for table_name in to_delete:
+        coll.delete_one({"_id": table_name})
+    return to_delete
 
 
 def profile_dataframe(df: DataFrame) -> dict[str, Any]:
@@ -170,6 +200,9 @@ def push_contract(
     expectations: dict[str, Any] | None = None,
     inputs: list[dict[str, Any]] | None = None,
     fixtures: list[dict[str, Any]] | None = None,
+    prefix: str = "",
+    lineage: dict[str, Any] | None = None,
+    last_run: dict[str, Any] | None = None,
 ) -> None:
     """Upsert a contract document into the contracts collection.
 
@@ -177,6 +210,11 @@ def push_contract(
     render fields, expectations, inputs, fixtures, and sample data without
     importing pipeline code. The profile is used as a baseline for future
     drift detection.
+
+    ``prefix`` attributes the contract to its owning table-repo (used by
+    pipeline-removal cleanup). ``lineage`` carries column-level provenance
+    captured from the Spark plan. ``last_run`` is a denormalized summary of
+    the most recent run (for cheap status reads without a Postgres round-trip).
     """
     from poorbricks.settings import settings
 
@@ -190,11 +228,14 @@ def push_contract(
         "storage": storage,
         "comment": comment,
         "module": module,
+        "prefix": prefix,
         "fields": fields or [],
         "validation_rules": validation_rules or [],
         "expectations": expectations or {},
         "inputs": inputs or [],
         "fixtures": fixtures or [],
+        "lineage": lineage or {},
+        "last_run": last_run or {},
         "profile": profile,
         "pushed_at": datetime.utcnow().isoformat(),
     }
@@ -226,10 +267,12 @@ def _bson_safe(value: Any) -> Any:
 
 
 __all__ = [
+    "delete_contract",
     "fetch_contract",
     "fetch_contract_from_mongo",
     "list_contract_details",
     "list_contracts",
     "profile_dataframe",
+    "prune_contracts",
     "push_contract",
 ]

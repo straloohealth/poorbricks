@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -42,6 +43,24 @@ class Settings(BaseSettings):
     spark_driver_memory: str = "6g"
     spark_local_dir: str | None = None  # scratch dir for shuffle/sort spill
     read_partitions: int = 64  # partitioned Mongo / JDBC reads — small chunks
+
+    # Environment / dev-namespacing. Workers set POORBRICKS_ENV /
+    # POORBRICKS_SCHEMA_SUFFIX; a dev run writes to e.g. ``silver__dev`` so it
+    # never touches prod tables, and every run record is stamped with the env.
+    environment: str = Field(
+        default="prod",
+        validation_alias=AliasChoices("POORBRICKS_ENV", "ENVIRONMENT"),
+    )
+    schema_suffix: str = Field(
+        default="",
+        validation_alias=AliasChoices("POORBRICKS_SCHEMA_SUFFIX", "SCHEMA_SUFFIX"),
+    )
+
+    # Alerting. The webhook is referenced as an env var only — it is injected
+    # via the runtime Secret (Vault-managed); no secret value lives in code.
+    alert_sink: str = "auto"  # "auto" | "slack" | "noop"
+    slack_webhook_url: str | None = None
+    alert_min_severity: str = "warn"  # "info" | "warn" | "error"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

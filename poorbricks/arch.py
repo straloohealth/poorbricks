@@ -74,6 +74,20 @@ def check_architecture(tables_root: Path | None = None) -> list[ArchError]:
         pipeline_dir = pipeline_py.parent
         rel = pipeline_dir.as_posix()
         errors.extend(_check_pipeline_dir(pipeline_dir, rel))
+
+    # Stubs are an architecture violation: a schema column projected as a
+    # placeholder constant silently breaks downstream consumers. The AST
+    # detector already exists — surface its findings as ArchErrors so
+    # ``verify --mode arch`` (CI) enforces "stubs are never used".
+    from .verification.no_stubs import find_stubs
+
+    for finding in find_stubs(root):
+        errors.append(
+            ArchError(
+                pipeline_dir=finding.file.parent.as_posix(),
+                message=finding.format(),
+            )
+        )
     return errors
 
 
