@@ -313,18 +313,14 @@ def verification_endpoint() -> dict[str, list[dict[str, Any]]]:
     """Static contract findings — stub columns, literals, cross-table breaks."""
     from pyspark.sql.types import StructType
 
-    from utils.contracts import fetch_contract_from_mongo, list_contracts
+    from utils.contracts import list_contract_analysis
 
     grouped: dict[str, list[dict[str, Any]]] = {"error": [], "warn": [], "info": []}
-    contracts: dict[str, dict[str, Any]] = {}
-    for summary in list_contracts():
-        name = summary.get("table_name")
-        if not name:
-            continue
-        try:
-            contracts[name] = fetch_contract_from_mongo(name)
-        except Exception:  # noqa: BLE001
-            continue
+    # Single batched read of the (already write-time-computed) analysis fields,
+    # not one fetch_contract_from_mongo per contract — keeps this fast at scale.
+    contracts: dict[str, dict[str, Any]] = {
+        c["table_name"]: c for c in list_contract_analysis() if c.get("table_name")
+    }
 
     def _trunc(cols: list[str], n: int = 8) -> str:
         return ", ".join(cols[:n]) + ("…" if len(cols) > n else "")

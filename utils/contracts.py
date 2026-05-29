@@ -131,6 +131,34 @@ def list_contract_details() -> list[dict[str, Any]]:
     return list(cursor)
 
 
+def list_contract_analysis() -> list[dict[str, Any]]:
+    """All contracts with just the fields the verification analysis reads, in a
+    SINGLE query.
+
+    The per-contract analysis inputs (``lineage.columns`` sources,
+    ``fields.is_literal``, ``profile.null_rates``, ``lineage.consumed``) are
+    already computed and stored when each pipeline runs — pre-processed at write
+    time. This reads them in bulk (one ``find`` instead of one
+    ``fetch_contract_from_mongo`` per contract), so ``/v1/verification`` is fast
+    at prod scale.
+    """
+    from poorbricks.settings import settings
+
+    cursor = _client()[settings.contracts_db][settings.contracts_collection].find(
+        {},
+        {
+            "table_name": 1,
+            "schema_json": 1,
+            "lineage.columns": 1,
+            "lineage.consumed": 1,
+            "fields.name": 1,
+            "fields.is_literal": 1,
+            "profile.null_rates": 1,
+        },
+    )
+    return list(cursor)
+
+
 def delete_contract(table_name: str) -> bool:
     """Delete a single contract by table name. Returns True if one was removed."""
     from poorbricks.settings import settings
