@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: poorbricks-ui
+  namespace: airflow
+  annotations:
+    # Override the operator's default "<ns>-<name>-ingress" device name so the
+    # UI is reachable at the clean MagicDNS name poorbricks.<tailnet>.ts.net.
+    tailscale.com/hostname: poorbricks
+spec:
+  ingressClassName: tailscale
+  # The MagicDNS name the Tailscale Ingress serves on (matches the hostname).
+  tls:
+    - hosts:
+        - poorbricks
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: poorbricks-ui
+                port:
+                  number: 3000

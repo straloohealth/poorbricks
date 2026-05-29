@@ -2,6 +2,8 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { api, tableOf, type ErrorRow } from "@/lib/api";
+import { ErrorDetail } from "@/components/ErrorDetail";
+import { errorHeadline } from "@/lib/errorFormat";
 
 export default function ErrorsPage() {
   const [rows, setRows] = useState<ErrorRow[]>([]);
@@ -57,16 +59,14 @@ export default function ErrorsPage() {
                     >
                       <td>{tableOf(r.pipeline_key)}</td>
                       <td className="muted">{r.environment}</td>
-                      <td>{r.headline}</td>
+                      <td>{errorHeadline(r.error) || r.headline}</td>
                       <td className="muted">{r.finished_at ?? ""}</td>
                       <td className="muted">{isOpen ? "▾" : "▸"}</td>
                     </tr>
                     {isOpen && (
                       <tr>
                         <td colSpan={5}>
-                          <pre className="stacktrace" data-cy="stacktrace">
-                            {r.error || "(no stacktrace recorded)"}
-                          </pre>
+                          <ErrorDetail error={r.error} />
                         </td>
                       </tr>
                     )}

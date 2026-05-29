@@ -2,6 +2,7 @@
 
 import { tableOf, type RunRecord } from "@/lib/api";
 import { rowActivate } from "@/lib/interactive";
+import { errorHeadline } from "@/lib/errorFormat";
 
 // "5 recent errors per dag (not dag run, no repeats)": dedupe failed runs by
 // pipeline key, keeping the most recent failure for each, then take the top 5.
@@ -48,7 +49,7 @@ export function RecentErrors({
           >
             <span className="k">{tableOf(r.pipeline_key)}</span>{" "}
             <span className="pk">{r.finished_at ?? ""}</span>
-            <div className="muted">{r.error ?? "failed"}</div>
+            <div className="muted" data-cy="error-headline">{errorHeadline(r.error)}</div>
           </div>
         ))
       )}

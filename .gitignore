@@ -38,8 +38,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to repo root: the Python build artifact, NOT web/lib (UI source).
+/lib/
+/lib64/
 parts/
 sdist/
 var/
