@@ -36,10 +36,12 @@ pipeline {
             installPythonDeps(privateRegistry: false)
             container('python') {
               waitForPortsReady(ports: '27017')
-              try {
-                sh 'poetry run pytest poorbricks/ utils/ tables/ validation/ api/ -n 2 -m "not integration and not slow"'
-                sh 'poetry run poorbricks verify --mode arch'
-              } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              script {
+                try {
+                  sh 'poetry run pytest poorbricks/ utils/ tables/ validation/ api/ -n 2 -m "not integration and not slow"'
+                  sh 'poetry run poorbricks verify --mode arch'
+                } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              }
             }
           }
         }
@@ -50,9 +52,11 @@ pipeline {
             checkout scm
             installPythonDeps(privateRegistry: false)
             container('python') {
-              try {
-                sh 'poetry run pytest tests/test_multi_repo.py -o "addopts=" --junitxml=test-results/junit.xml --tb=short -v'
-              } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              script {
+                try {
+                  sh 'poetry run pytest tests/test_multi_repo.py -o "addopts=" --junitxml=test-results/junit.xml --tb=short -v'
+                } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              }
             }
           }
         }
@@ -64,9 +68,11 @@ pipeline {
             installPythonDeps(privateRegistry: false)
             container('python') {
               waitForPortsReady(ports: '27017')
-              try {
-                sh 'poetry run pytest tests/test_wheel_install_boundary.py -m slow -n 0'
-              } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              script {
+                try {
+                  sh 'poetry run pytest tests/test_wheel_install_boundary.py -m slow -n 0'
+                } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              }
             }
           }
         }
@@ -78,9 +84,11 @@ pipeline {
             installPythonDeps(privateRegistry: false)
             container('python') {
               waitForPortsReady(ports: '27017 5432')
-              try {
-                sh 'poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0'
-              } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              script {
+                try {
+                  sh 'poetry run pytest tests/test_distributed_pipeline.py -m integration -n 0'
+                } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              }
             }
           }
         }
@@ -91,9 +99,11 @@ pipeline {
             checkout scm
             installPythonDeps(privateRegistry: false)
             container('python') {
-              try {
-                sh 'poetry run pytest tests/test_infrastructure_e2e.py'
-              } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              script {
+                try {
+                  sh 'poetry run pytest tests/test_infrastructure_e2e.py'
+                } finally { junit testResults: 'test-results/junit.xml', allowEmptyResults: true }
+              }
             }
           }
         }
