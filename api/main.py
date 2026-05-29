@@ -196,6 +196,108 @@ def runs_endpoint(limit: int = 100) -> list[dict[str, Any]]:
     return out
 
 
+def _error_headline(err: str | None) -> str:
+    """Collapse a (possibly multi-line) error/stacktrace to one readable line.
+
+    Prefers the deepest ``Xxx(Error|Exception): msg`` or a Spark ``[ERROR_CODE]``
+    line over the raw traceback head; strips a leading ``[base]`` worker-log
+    prefix. The full text is preserved in run_history and served by /v1/errors.
+    """
+    if not err:
+        return "run failed"
+    lines = [ln.strip() for ln in err.splitlines() if ln.strip()]
+    if not lines:
+        return "run failed"
+
+    def _clean(ln: str) -> str:
+        return re.sub(r"^\[\w+\]\s*", "", ln)[:240]  # drop '[base] ' worker prefix
+
+    # 1. structured Spark error-class line (the root cause), e.g.
+    #    "[FIELD_NOT_NULLABLE_WITH_NAME] field is_active: ... got None."
+    coded = [ln for ln in lines if re.search(r"\[[A-Z][A-Z0-9_]{3,}\]", ln)]
+    if coded:
+        return _clean(coded[-1])
+    # 2. deepest real exception, skipping generic Spark wrappers
+    exc = [
+        ln
+        for ln in lines
+        if re.search(r"(Error|Exception):", ln) and "Traceback" not in ln
+    ]
+    nonwrap = [
+        ln for ln in exc if not re.search(r"Job aborted|stage failure|SparkException", ln)
+    ]
+    if nonwrap:
+        return _clean(nonwrap[-1])
+    if exc:
+        return _clean(exc[-1])
+    return _clean(lines[-1])
+
+
+@app.get("/v1/errors")
+def errors_endpoint(limit: int = 200) -> list[dict[str, Any]]:
+    """Failed runs with their full stacktrace — backs the dedicated errors view.
+
+    Alerts (/v1/alerts) carry only the headline; this serves the detail so
+    stacktraces don't clutter the alerts panel. Latest failure per pipeline.
+    """
+    from poorbricks.run_history import RunHistoryStore
+
+    bounded = max(1, min(limit, 1000))
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rec in RunHistoryStore().recent(limit=bounded):
+        if rec.status != "failed" or rec.pipeline_key in seen:
+            continue
+        seen.add(rec.pipeline_key)
+        out.append(
+            {
+                "pipeline_key": rec.pipeline_key,
+                "table_name": rec.table_name,
+                "environment": rec.environment,
+                "finished_at": rec.finished_at.isoformat() if rec.finished_at else None,
+                "headline": _error_headline(rec.error),
+                "error": rec.error or "",
+            }
+        )
+    return out
+
+
+@app.get("/v1/source/{table_name}")
+def source_endpoint(table_name: str) -> dict[str, Any]:
+    """Original repo source for a table (transform/pipeline/config/fixtures) —
+    the code as written, not a transformed version — for debugging.
+
+    Read from the published code tree (what the upload persisted), located via
+    the contract's ``module`` + ``prefix``; no pipeline re-run needed.
+    """
+    from utils.contracts import fetch_contract_from_mongo
+
+    try:
+        contract = fetch_contract_from_mongo(table_name)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail=f"no contract for {table_name!r}")
+    module = (contract or {}).get("module") or ""
+    prefix = (contract or {}).get("prefix") or ""
+    files: dict[str, str] = {}
+    if module:
+        # tables.silver.dim_patient.pipeline -> tables/silver/dim_patient
+        rel = module.rsplit(".", 1)[0].replace(".", "/")
+        base = Path(settings.dags_dir) / settings.code_pvc_root / prefix / rel
+        for fname in ("transform.py", "pipeline.py", "config.py", "fixtures.py"):
+            try:
+                fp = base / fname
+                if fp.is_file():
+                    files[fname] = fp.read_text()
+            except Exception:  # noqa: BLE001
+                continue
+    return {
+        "table_name": table_name,
+        "module": module,
+        "prefix": prefix,
+        "files": files,
+    }
+
+
 @app.get("/v1/staleness")
 def staleness_endpoint() -> list[dict[str, Any]]:
     """Per-pipeline freshness verdicts (ok / overdue / missing) for the dashboard.
@@ -260,7 +362,9 @@ def alerts_endpoint(environment: str = "prod") -> dict[str, list[dict[str, Any]]
                 {
                     "kind": "failure",
                     "pipeline_key": key,
-                    "summary": (rec.error or "")[:160],
+                    # Headline only — the full stacktrace lives in /v1/errors so
+                    # alerts stay readable and link out to the error detail.
+                    "summary": _error_headline(rec.error),
                 }
             )
         if rec.anomaly and rec.anomaly.get("is_anomaly"):
