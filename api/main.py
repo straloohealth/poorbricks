@@ -234,7 +234,9 @@ def _error_headline(err: str | None) -> str:
         if re.search(r"(Error|Exception):", ln) and "Traceback" not in ln
     ]
     nonwrap = [
-        ln for ln in exc if not re.search(r"Job aborted|stage failure|SparkException", ln)
+        ln
+        for ln in exc
+        if not re.search(r"Job aborted|stage failure|SparkException", ln)
     ]
     if nonwrap:
         return _clean(nonwrap[-1])
@@ -332,7 +334,9 @@ def set_descriptions_endpoint(
         try:
             fetch_contract_from_mongo(table_name)
         except Exception:  # noqa: BLE001
-            raise HTTPException(status_code=404, detail=f"no contract for {table_name!r}")
+            raise HTTPException(
+                status_code=404, detail=f"no contract for {table_name!r}"
+            )
     return {"ok": True, "table_name": table_name, "applied": applied}
 
 
@@ -490,6 +494,19 @@ def verification_endpoint() -> dict[str, list[dict[str, Any]]]:
                     "kind": "literal",
                     "pipeline_key": name,
                     "summary": f"{len(literals)} literal column(s): {_trunc(literals)}",
+                }
+            )
+        imputed = {col: n for col, n in (c.get("imputations") or {}).items() if n}
+        if imputed:
+            detail = ", ".join(f"{col} ({n})" for col, n in sorted(imputed.items()))
+            grouped["warn"].append(
+                {
+                    "kind": "imputed",
+                    "pipeline_key": name,
+                    "summary": (
+                        f"bad source data defaulted in {len(imputed)} column(s): "
+                        f"{detail} — non-nullable column had null/missing source values"
+                    ),
                 }
             )
 

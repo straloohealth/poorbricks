@@ -64,6 +64,15 @@ class Expectations:
     listing the column in ``NON_NULL_COLUMNS``; use this when you tolerate
     a small fraction of nulls."""
 
+    IMPUTE_DEFAULTS: dict[str, Any] = {}
+    """``{column: default}``. A column the contract declares non-nullable but
+    whose *source* may carry nulls/missing values (messy upstream). Instead of
+    aborting the run, the framework coalesces nulls to ``default`` before the
+    write — keeping the contract non-nullable and the rows — and records the
+    imputed-row count on the contract so ``/v1/verification`` raises a
+    NON-CRITICAL warning ("bad source data was defaulted"). Pair with
+    ``MongoSource(nullable_columns=[...])`` so the read survives the nulls."""
+
     ENUM_VALUES: dict[str, list[Any]] = {}
     """``{column: allowed_values}``. Every row's value for ``column`` must
     be in ``allowed_values``. Useful for status/category columns."""

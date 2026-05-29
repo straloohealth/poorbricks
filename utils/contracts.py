@@ -154,6 +154,7 @@ def list_contract_analysis() -> list[dict[str, Any]]:
             "fields.name": 1,
             "fields.is_literal": 1,
             "profile.null_rates": 1,
+            "imputations": 1,
         },
     )
     return list(cursor)
@@ -182,7 +183,9 @@ def set_field_descriptions(
     from poorbricks.settings import settings
 
     coll = _client()[settings.contracts_db][settings.contracts_collection]
-    doc = coll.find_one({"_id": table_name}) or coll.find_one({"table_name": table_name})
+    doc = coll.find_one({"_id": table_name}) or coll.find_one(
+        {"table_name": table_name}
+    )
     if not doc:
         return 0
     fields = doc.get("fields") or []
@@ -263,6 +266,7 @@ def push_contract(
     prefix: str = "",
     lineage: dict[str, Any] | None = None,
     last_run: dict[str, Any] | None = None,
+    imputations: dict[str, int] | None = None,
 ) -> None:
     """Upsert a contract document into the contracts collection.
 
@@ -297,6 +301,10 @@ def push_contract(
         "lineage": lineage or {},
         "last_run": last_run or {},
         "profile": profile,
+        # {column: imputed_row_count} for non-nullable columns whose source
+        # nulls were defaulted (see Expectations.IMPUTE_DEFAULTS). /v1/verification
+        # raises a non-critical warning when any count is > 0.
+        "imputations": imputations or {},
         "pushed_at": datetime.utcnow().isoformat(),
     }
     _client()[settings.contracts_db][settings.contracts_collection].replace_one(

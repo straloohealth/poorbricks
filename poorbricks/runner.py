@@ -195,7 +195,9 @@ def _resolve_production_input(
             )
         from utils.mongo import get_all
 
-        return get_all(mongo_uri, spec.db, spec.collection, schema=spec.schema)
+        # read_schema relaxes spec.nullable_columns so a null/missing source
+        # value never aborts the read; the pipeline imputes them downstream.
+        return get_all(mongo_uri, spec.db, spec.collection, schema=spec.read_schema)
     if isinstance(spec, ContractSource):
         if spec.table_name not in cache:
             cache[spec.table_name] = _read_contract_source(spark, spec.table_name)
