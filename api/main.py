@@ -212,15 +212,25 @@ def _error_headline(err: str | None) -> str:
     def _clean(ln: str) -> str:
         return re.sub(r"^\[\w+\]\s*", "", ln)[:240]  # drop '[base] ' worker prefix
 
+    # query-plan tree fragments are noise, never a useful headline
+    def _is_plan(ln: str) -> bool:
+        return bool(
+            re.match(r"[+:|=]", ln.lstrip("[base] ").strip())
+            or re.search(r"#\d+\b", ln)  # attribute refs like patient_id#0
+            or re.search(r"\b(LogicalRDD|Relation|Project|Filter|Join)\b", ln)
+        )
+
+    usable = [ln for ln in lines if not _is_plan(ln)]
+    src = usable or lines
     # 1. structured Spark error-class line (the root cause), e.g.
-    #    "[FIELD_NOT_NULLABLE_WITH_NAME] field is_active: ... got None."
-    coded = [ln for ln in lines if re.search(r"\[[A-Z][A-Z0-9_]{3,}\]", ln)]
+    #    "[UNRESOLVED_COLUMN.WITH_SUGGESTION] …" / "[FIELD_NOT_NULLABLE_WITH_NAME] …"
+    coded = [ln for ln in src if re.search(r"\[[A-Z][A-Z0-9_.]{2,}\]", ln)]
     if coded:
         return _clean(coded[-1])
     # 2. deepest real exception, skipping generic Spark wrappers
     exc = [
         ln
-        for ln in lines
+        for ln in src
         if re.search(r"(Error|Exception):", ln) and "Traceback" not in ln
     ]
     nonwrap = [
@@ -230,7 +240,7 @@ def _error_headline(err: str | None) -> str:
         return _clean(nonwrap[-1])
     if exc:
         return _clean(exc[-1])
-    return _clean(lines[-1])
+    return _clean(src[-1])
 
 
 @app.get("/v1/errors")
@@ -243,12 +253,18 @@ def errors_endpoint(limit: int = 200) -> list[dict[str, Any]]:
     from poorbricks.run_history import RunHistoryStore
 
     bounded = max(1, min(limit, 1000))
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    # Latest run per pipeline (newest finished_at wins), then keep the failures —
+    # so a pipeline that has since succeeded drops off, and old failures outside
+    # a naive recent-N window are still caught.
+    latest: dict[str, Any] = {}
     for rec in RunHistoryStore().recent(limit=bounded):
-        if rec.status != "failed" or rec.pipeline_key in seen:
+        prev = latest.get(rec.pipeline_key)
+        if prev is None or (rec.finished_at and rec.finished_at > prev.finished_at):
+            latest[rec.pipeline_key] = rec
+    out: list[dict[str, Any]] = []
+    for rec in latest.values():
+        if rec.status != "failed":
             continue
-        seen.add(rec.pipeline_key)
         out.append(
             {
                 "pipeline_key": rec.pipeline_key,
@@ -259,6 +275,7 @@ def errors_endpoint(limit: int = 200) -> list[dict[str, Any]]:
                 "error": rec.error or "",
             }
         )
+    out.sort(key=lambda r: r["finished_at"] or "", reverse=True)
     return out
 
 
