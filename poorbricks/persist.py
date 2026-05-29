@@ -27,16 +27,122 @@ def _pg_table_name(table_name: str) -> str:
     return table_name.replace(".", "_")
 
 
-def _flatten_fields(
-    schema_json: dict[str, Any], literal_columns: set[str] | None = None
-) -> list[dict[str, Any]]:
-    """Pull out `[{name, type, nullable, description?, is_literal?}]` from a schema.
+# Common column-name abbreviations, expanded when humanizing a name for an
+# auto-generated description. Kept small and unambiguous on purpose.
+_DESC_ABBREV = {
+    "id": "ID",
+    "ids": "IDs",
+    "kid": "Mongo key",
+    "usd": "USD",
+    "brl": "BRL",
+    "url": "URL",
+    "uri": "URI",
+    "ts": "timestamp",
+    "pct": "percentage",
+    "qty": "quantity",
+    "num": "number",
+    "avg": "average",
+    "max": "maximum",
+    "min": "minimum",
+    "ref": "reference",
+    "dt": "date",
+    "llm": "LLM",
+    "api": "API",
+    "fk": "foreign key",
+}
 
-    ``description`` comes from the ``StructField`` metadata (sourced from the
-    pydantic ``Field(description=...)``); ``is_literal`` flags columns produced
-    by a constant ``f.lit(...)`` so the management UI can show an info badge.
+
+def _humanize_name(name: str) -> str:
+    """``finance_cost_usd`` → ``finance cost USD`` (snake_case → readable words)."""
+    words = [w for w in name.replace("__", "_").split("_") if w]
+    return " ".join(_DESC_ABBREV.get(w.lower(), w) for w in words)
+
+
+def _cap(text: str) -> str:
+    """Capitalize the first character without touching the rest (keeps USD/ID/LLM)."""
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _provenance(sources: list[dict[str, Any]] | None) -> str:
+    """Render column-lineage sources as a trailing `Derived from a.b, c.d.` clause."""
+    if not sources:
+        return ""
+    refs: list[str] = []
+    for src in sources:
+        table, column = src.get("table"), src.get("column")
+        if table and column:
+            refs.append(f"{table}.{column}")
+        elif column:
+            refs.append(str(column))
+    refs = sorted(set(refs))
+    if not refs:
+        return ""
+    shown = ", ".join(refs[:4]) + (" …" if len(refs) > 4 else "")
+    return f" Derived from {shown}."
+
+
+def _generate_description(
+    name: str,
+    type_label: str,
+    is_literal: bool,
+    sources: list[dict[str, Any]] | None,
+) -> str:
+    """Best-effort human/LLM-readable description for a field that has none.
+
+    Deterministic (no LLM): humanizes the column name and layers in type,
+    boolean/identifier/temporal/monetary intent, and column-lineage provenance.
+    Used only when the pydantic ``Field(description=...)`` is absent — a real
+    authored description always takes precedence. The caller flags the field
+    ``description_generated`` so cosmo/LLMs know it is heuristic, not curated.
+    """
+    low = name.lower()
+    if is_literal:
+        return f"Constant literal value ({type_label}) stamped on every row."
+    for prefix in ("is_", "has_", "was_", "can_", "should_"):
+        if low.startswith(prefix):
+            return (
+                f"Whether {_humanize_name(name[len(prefix) :]).lower()}."
+                + _provenance(sources)
+            )
+    base: str
+    if low == "id":
+        base = "Unique identifier for the row."
+    elif low.endswith("_kid"):
+        base = f"MongoDB source key (_id) of the {_humanize_name(name[:-4]).lower()}."
+    elif low.endswith("_id"):
+        base = f"Identifier of the {_humanize_name(name[:-3]).lower()}."
+    elif type_label == "boolean":
+        base = f"Whether {_humanize_name(name).lower()}."
+    elif type_label in ("timestamp", "date") or low.endswith(("_at", "_ts", "_date")):
+        base = f"{_humanize_name(name)} ({type_label})."
+    elif low.startswith(("num_", "n_")) or low.endswith(("_count", "_qty")):
+        base = f"Count of {_humanize_name(name).lower()}."
+    elif low.endswith(("_usd", "_brl", "_amount", "_cost", "_price")):
+        base = f"{_humanize_name(name)} — monetary amount."
+    elif low.endswith(("_rate", "_pct", "_ratio")):
+        base = f"{_humanize_name(name)} — a rate/proportion."
+    else:
+        base = f"{_humanize_name(name)} ({type_label})."
+    return _cap(base) + _provenance(sources)
+
+
+def _flatten_fields(
+    schema_json: dict[str, Any],
+    literal_columns: set[str] | None = None,
+    lineage: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Pull out `[{name, type, nullable, description, is_literal?}]` from a schema.
+
+    ``description`` is taken from the ``StructField`` metadata (sourced from the
+    pydantic ``Field(description=...)``) when present. When a field has no
+    authored description, one is **auto-generated** here so every contract field
+    carries human/LLM-readable intent — written through the normal worker push
+    path (which has Mongo write access), flagged ``description_generated`` so an
+    authored description always wins on a later run. ``is_literal`` flags columns
+    produced by a constant ``f.lit(...)`` so the management UI shows an info badge.
     """
     literals = literal_columns or set()
+    lineage_cols = (lineage or {}).get("columns") or {}
     fields: list[dict[str, Any]] = []
     for field in schema_json.get("fields", []):
         spark_type = field.get("type")
@@ -44,16 +150,24 @@ def _flatten_fields(
             type_label = spark_type.get("type", "struct")
         else:
             type_label = str(spark_type)
+        name = field["name"]
+        is_literal = name in literals
         entry: dict[str, Any] = {
-            "name": field["name"],
+            "name": name,
             "type": type_label,
             "nullable": field.get("nullable", True),
         }
+        if is_literal:
+            entry["is_literal"] = True
         description = (field.get("metadata") or {}).get("description")
         if description:
             entry["description"] = description
-        if field["name"] in literals:
-            entry["is_literal"] = True
+        else:
+            sources = (lineage_cols.get(name) or {}).get("sources")
+            entry["description"] = _generate_description(
+                name, type_label, is_literal, sources
+            )
+            entry["description_generated"] = True
         fields.append(entry)
     return fields
 
@@ -479,7 +593,9 @@ def run_and_persist(
             storage=meta.target_storage,
             comment=meta.comment,
             module=meta.module,
-            fields=_flatten_fields(schema_json, _literal_columns_for_meta(meta)),
+            fields=_flatten_fields(
+                schema_json, _literal_columns_for_meta(meta), result.lineage
+            ),
             validation_rules=_serialize_rules(meta.model),
             expectations=_serialize_expectations(exp_cls),
             inputs=_serialize_inputs(meta.inputs_cls),
