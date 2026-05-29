@@ -187,10 +187,10 @@ def set_field_descriptions(
         return 0
     fields = doc.get("fields") or []
     applied = 0
-    for f in fields:
-        name = f.get("name")
-        if name in descriptions and (overwrite or not f.get("description")):
-            f["description"] = descriptions[name]
+    for fld in fields:
+        name = fld.get("name")
+        if name in descriptions and (overwrite or not fld.get("description")):
+            fld["description"] = descriptions[name]
             applied += 1
     fd = dict(doc.get("field_descriptions") or {})
     fd.update(descriptions)
