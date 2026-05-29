@@ -1,0 +1,88 @@
+# ONE-SHOT migration Job: copy the DAG dir from the old ReadWriteOnce PVC
+# (airflow-dags) to the new ReadWriteMany Filestore PVC (airflow-dags-rwx)
+# before the control plane is cut over to the new claim.
+#
+# Run this MANUALLY, once, as part of the HA rollout — it is intentionally NOT
+# applied by the normal deploy (CI applies deploy/k8s/airflow-custom/*.yaml, but
+# this lives under migrations/ so it is excluded). Re-applying a completed Job
+# with the same name fails; delete it first if you need to re-run.
+#
+#   kubectl apply -f deploy/k8s/airflow-custom/00-pvc-rwx.yaml      # create the RWX PVC
+#   kubectl apply -f deploy/k8s/airflow-custom/migrations/copy-dags-to-rwx.yaml
+#   kubectl -n airflow wait --for=condition=complete job/copy-dags-to-rwx --timeout=15m
+#   kubectl -n airflow logs job/copy-dags-to-rwx
+#   kubectl -n airflow delete job copy-dags-to-rwx                  # cleanup
+#
+# Why a copy (vs. just re-uploading): DAGs are written to the PVC by the
+# poorbricks-server API (LocalDagStore.put). They are regenerable via /v1/upload,
+# but only when each consumer repo re-deploys — copying avoids a scheduling gap
+# for DAGs whose source repos are not re-uploaded right away.
+#
+# The pod is pinned to the dags node so the RWO PD (attached there) can mount;
+# RWO permits multiple pods on the *same* node, so the live control plane keeps
+# the volume mounted and this runs with zero downtime. The RWX PVC uses
+# WaitForFirstConsumer binding, so this Job is what triggers Filestore
+# provisioning (expect a few minutes Pending on first run).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-dags-to-rwx
+  namespace: airflow
+  labels:
+    app.kubernetes.io/part-of: poorbricks
+    app.kubernetes.io/component: dags-migration
+spec:
+  backoffLimit: 2
+  # Clean the Job object up automatically 1h after it finishes.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: poorbricks
+        app.kubernetes.io/component: dags-migration
+    spec:
+      restartPolicy: Never
+      # Land on the node the RWO PD is attached to so it can be mounted.
+      nodeSelector:
+        poorbricks.io/dags: "true"
+      # Match the airflow uid/gid so copied files are owned/readable by the
+      # scheduler, dag-processor and api-server (which all run as 50000).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 50000
+        fsGroup: 50000
+      containers:
+        - name: copy
+          # Reuse an image already present on the node (IfNotPresent) — it has
+          # coreutils and matches the airflow uid.
+          image: apache/airflow:3.2.0
+          imagePullPolicy: IfNotPresent
+          # -rL (not -a): don't try to preserve source ownership as non-root;
+          # new files are owned by uid 50000. -v for an auditable log. The
+          # trailing /. copies the directory *contents*, including dotfiles.
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              echo "Source (old RWO) contents:"
+              ls -la /old || true
+              echo "Copying /old -> /new ..."
+              cp -rLv /old/. /new/
+              echo "Destination (new RWX) contents:"
+              ls -la /new
+              echo "Copy complete."
+          volumeMounts:
+            - name: old-dags
+              mountPath: /old
+              readOnly: true
+            - name: new-dags
+              mountPath: /new
+      volumes:
+        - name: old-dags
+          persistentVolumeClaim:
+            claimName: airflow-dags
+            readOnly: true
+        - name: new-dags
+          persistentVolumeClaim:
+            claimName: airflow-dags-rwx

@@ -1,0 +1,46 @@
+# PodDisruptionBudgets for the HA (2-replica) Airflow control-plane components.
+# minAvailable: 1 lets a voluntary disruption (node drain / upgrade) evict one
+# replica while guaranteeing the other stays up, so the component never goes to
+# zero during maintenance.
+#
+# NOTE: no PDB for the dag-processor — it runs a single replica, and a
+# minAvailable:1 PDB on a 1-replica workload would block node drains entirely
+# (the lone pod can never be evicted). It instead relies on rescheduling.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: airflow-scheduler
+  namespace: airflow
+  labels:
+    component: scheduler
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: scheduler
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: airflow-triggerer
+  namespace: airflow
+  labels:
+    component: triggerer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: triggerer
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: airflow-webserver
+  namespace: airflow
+  labels:
+    component: webserver
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: webserver

@@ -7,7 +7,12 @@ echo "Deploying single-namespace Airflow + Poorbricks to K8s..."
 # 1. Create namespace and core Airflow infrastructure (PVC, secrets, config, RBAC)
 echo "1. Creating airflow namespace and core infrastructure..."
 kubectl apply -f deploy/k8s/airflow-custom/00-namespace.yaml
-kubectl apply -f deploy/k8s/airflow-custom/00-pvc.yaml
+# ReadWriteMany DAG volume on Filestore — shared across all on-demand nodes so
+# the control plane + API can run multi-replica/multi-node. The legacy
+# ReadWriteOnce PVC (00-pvc.yaml) is retained in the repo only for migrating an
+# existing cluster (see migrations/copy-dags-to-rwx.yaml) and is NOT applied on
+# a fresh install.
+kubectl apply -f deploy/k8s/airflow-custom/00-pvc-rwx.yaml
 kubectl apply -f deploy/k8s/airflow-custom/01-secrets.yaml
 kubectl apply -f deploy/k8s/airflow-custom/02-configmap.yaml
 kubectl apply -f deploy/k8s/airflow-custom/04-serviceaccount.yaml
@@ -23,11 +28,14 @@ kubectl apply -f deploy/k8s/airflow-custom/03-postgresql.yaml
 echo "3. Deploying MongoDB..."
 kubectl apply -f deploy/k8s/mongo/mongo.yaml
 
-# 4. Label one node for DAG pod co-location (fixes RWO PVC multi-attach)
-echo "4. Labeling node for DAG pod affinity..."
-NODE=$(kubectl get nodes --no-headers | awk 'NR==1{print $1}')
-echo "   Using node: ${NODE}"
-kubectl label node "${NODE}" poorbricks.io/dags=true --overwrite
+# 4. (removed) Node-labeling for DAG pod co-location is no longer needed: the
+#    DAG volume is now ReadWriteMany (Filestore), so the control plane spreads
+#    across the on-demand pool instead of being pinned to one node. The spot
+#    pool's taint keeps these pods on on-demand nodes without a selector.
+#    NOTE: when migrating an *existing* cluster, the poorbricks.io/dags label
+#    (still on the old node) is what lets migrations/copy-dags-to-rwx.yaml mount
+#    the old RWO PD to copy DAGs into the RWX volume before cutover.
+echo "4. (skipped) RWX DAG volume — no single-node pinning required."
 
 # 5. Run database migrations
 echo "5. Running Airflow database migrations..."
@@ -47,6 +55,8 @@ kubectl apply -f deploy/k8s/airflow-custom/06-triggerer.yaml
 kubectl apply -f deploy/k8s/airflow-custom/07-dag-processor.yaml
 kubectl apply -f deploy/k8s/airflow-custom/08-webserver.yaml
 kubectl apply -f deploy/k8s/airflow-custom/09-ingress.yaml
+# PodDisruptionBudgets for the 2-replica components (keep ≥1 up during drains).
+kubectl apply -f deploy/k8s/airflow-custom/10-pdb.yaml
 
 # 8. Create runtime secret for worker pods (sources production creds from .env)
 echo "8. Creating poorbricks-runtime secret..."
@@ -76,6 +86,7 @@ kubectl apply -f deploy/k8s/api/serviceaccount.yaml
 kubectl apply -f deploy/k8s/api/service.yaml
 kubectl apply -f deploy/k8s/api/ingress.yaml
 kubectl apply -f deploy/k8s/api/deployment.yaml
+kubectl apply -f deploy/k8s/api/pdb.yaml
 
 # 10. Wait for critical services to be ready
 echo "10. Waiting for services to be ready..."

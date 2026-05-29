@@ -9,7 +9,11 @@ metadata:
     component: scheduler
 spec:
   serviceName: airflow-scheduler
-  replicas: 1
+  # HA: 2 schedulers. Airflow's active-active scheduler HA coordinates via
+  # metadata-DB row locks (SELECT ... FOR UPDATE SKIP LOCKED), supported on our
+  # Postgres 16 and compatible with LocalExecutor. A task is only ever queued by
+  # one scheduler; if a scheduler/node dies the other keeps scheduling.
+  replicas: 2
   selector:
     matchLabels:
       component: scheduler
@@ -20,8 +24,20 @@ spec:
     spec:
       serviceAccountName: airflow
       restartPolicy: Always
-      nodeSelector:
-        poorbricks.io/dags: "true"
+      # De-pinned from the single poorbricks.io/dags node (that pinning existed
+      # only because the old RWO DAG PVC attached to one node). The DAG dir is
+      # now RWX (airflow-dags-rwx), so schedulers can spread across the on-demand
+      # pool. The spot pool is tainted and these pods carry no spot toleration,
+      # so they stay on on-demand nodes without an explicit selector.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    component: scheduler
+                topologyKey: kubernetes.io/hostname
       securityContext:
         fsGroup: 50000
       containers:
@@ -90,7 +106,7 @@ spec:
       volumes:
       - name: dags
         persistentVolumeClaim:
-          claimName: airflow-dags
+          claimName: airflow-dags-rwx
       - name: logs
         emptyDir:
           sizeLimit: 500Mi

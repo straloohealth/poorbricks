@@ -32,6 +32,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from poorbricks.airflow import (
@@ -47,6 +48,14 @@ from poorbricks.airflow.dag_store import DagStore
 from .config import ApiSettings, settings
 
 app = FastAPI(title="poorbricks-server", version="0.1.0")
+
+# The Next.js dev server (and the static export) call this API cross-origin.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SHA_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
@@ -213,6 +222,158 @@ def staleness_endpoint() -> list[dict[str, Any]]:
     return [v.to_dict() for v in evaluate(cadences, last_finished, now)]
 
 
+@app.get("/v1/lineage")
+def lineage_endpoint() -> dict[str, list[dict[str, Any]]]:
+    """Table-to-table lineage graph (nodes + edges) for the navigator."""
+    from utils.contracts import list_contract_details
+    from utils.lineage import build_lineage_graph
+
+    nodes, edges = build_lineage_graph(list_contract_details())
+    return {
+        "nodes": [{"id": n.id, "label": n.label, "kind": n.kind} for n in nodes],
+        "edges": [{"source": e.source, "target": e.target} for e in edges],
+    }
+
+
+@app.get("/v1/alerts")
+def alerts_endpoint(environment: str = "prod") -> dict[str, list[dict[str, Any]]]:
+    """Runtime alerts grouped by severity — failures, anomalies, regressions, staleness."""
+    from datetime import UTC, datetime
+
+    from poorbricks.run_history import RunHistoryStore
+    from poorbricks.staleness import cadences_from_dags, evaluate
+
+    grouped: dict[str, list[dict[str, Any]]] = {"error": [], "warn": [], "info": []}
+    store = RunHistoryStore()
+
+    # Newest run per pipeline in this environment.
+    latest: dict[str, Any] = {}
+    for rec in store.recent(300):
+        if rec.environment != environment:
+            continue
+        prev = latest.get(rec.pipeline_key)
+        if prev is None or (rec.finished_at and rec.finished_at > prev.finished_at):
+            latest[rec.pipeline_key] = rec
+    for key, rec in latest.items():
+        if rec.status == "failed":
+            grouped["error"].append(
+                {
+                    "kind": "failure",
+                    "pipeline_key": key,
+                    "summary": (rec.error or "")[:160],
+                }
+            )
+        if rec.anomaly and rec.anomaly.get("is_anomaly"):
+            grouped["warn"].append(
+                {
+                    "kind": "row_count_anomaly",
+                    "pipeline_key": key,
+                    "summary": rec.anomaly.get("reason") or "row-count anomaly",
+                }
+            )
+        drift = rec.drift_summary or {}
+        if drift.get("regression_count") or drift.get("regressed_columns"):
+            grouped["warn"].append(
+                {
+                    "kind": "regression",
+                    "pipeline_key": key,
+                    "summary": "regression vs. prior run",
+                }
+            )
+
+    now = datetime.now(UTC)
+    cadences = cadences_from_dags(_build_store(settings), now)
+    last = {
+        k: r.finished_at
+        for k, r in store.last_run_per_pipeline(environment).items()
+        if r.finished_at
+    }
+    for v in evaluate(cadences, last, now):
+        if v.state == "missing":
+            grouped["error"].append(
+                {
+                    "kind": "staleness",
+                    "pipeline_key": v.pipeline_key,
+                    "summary": "no run on record",
+                }
+            )
+        elif v.state == "overdue":
+            grouped["warn"].append(
+                {
+                    "kind": "staleness",
+                    "pipeline_key": v.pipeline_key,
+                    "summary": f"overdue: {round((v.age_s or 0) / 3600, 1)}h since last run",
+                }
+            )
+    return grouped
+
+
+@app.get("/v1/verification")
+def verification_endpoint() -> dict[str, list[dict[str, Any]]]:
+    """Static contract findings — stub columns, literals, cross-table breaks."""
+    from pyspark.sql.types import StructType
+
+    from utils.contracts import fetch_contract_from_mongo, list_contracts
+
+    grouped: dict[str, list[dict[str, Any]]] = {"error": [], "warn": [], "info": []}
+    contracts: dict[str, dict[str, Any]] = {}
+    for summary in list_contracts():
+        name = summary.get("table_name")
+        if not name:
+            continue
+        try:
+            contracts[name] = fetch_contract_from_mongo(name)
+        except Exception:  # noqa: BLE001
+            continue
+
+    def _trunc(cols: list[str], n: int = 8) -> str:
+        return ", ".join(cols[:n]) + ("…" if len(cols) > n else "")
+
+    for name, c in contracts.items():
+        cols = (c.get("lineage") or {}).get("columns") or {}
+        null_rates = (c.get("profile") or {}).get("null_rates") or {}
+        fields = c.get("fields") or []
+        if cols:
+            stub = sorted(k for k, v in cols.items() if not v.get("sources"))
+        else:
+            stub = sorted(k for k, r in null_rates.items() if r == 1.0)
+        literals = sorted(f["name"] for f in fields if f.get("is_literal"))
+        if stub:
+            grouped["warn"].append(
+                {
+                    "kind": "stub",
+                    "pipeline_key": name,
+                    "summary": f"{len(stub)} column(s) with no upstream source: {_trunc(stub)}",
+                }
+            )
+        if literals:
+            grouped["info"].append(
+                {
+                    "kind": "literal",
+                    "pipeline_key": name,
+                    "summary": f"{len(literals)} literal column(s): {_trunc(literals)}",
+                }
+            )
+
+    for name, c in contracts.items():
+        consumed = (c.get("lineage") or {}).get("consumed") or {}
+        for upstream, used in consumed.items():
+            up = contracts.get(upstream)
+            if up is None:
+                continue
+            have = {f.name for f in StructType.fromJson(up["schema_json"]).fields}
+            missing = sorted(set(used) - have)
+            if missing:
+                grouped["error"].append(
+                    {
+                        "kind": "contract_break",
+                        "pipeline_key": name,
+                        "summary": f"consumes {upstream}.{{{', '.join(missing)}}} (gone upstream)",
+                    }
+                )
+    return grouped
+
+
 @app.post("/v1/dags/{dag_id}/run")
 def trigger_dag_endpoint(dag_id: str) -> dict[str, Any]:
     """Trigger a manual Airflow DAG run (web-debug: run a dev DAG and watch it)."""
@@ -325,14 +486,18 @@ async def get_code(prefix: str) -> Response:
 
 
 @app.post("/v1/regenerate")
-async def regenerate() -> JSONResponse:
-    """Re-render every stored DAG in place with the current dag_generator.
+async def regenerate(prefix: str | None = None) -> JSONResponse:
+    """Re-render stored DAGs in place with the current dag_generator.
 
     Migrates already-uploaded DAGs onto a new worker pod spec without
     re-uploading any table repo: each stored DAG already carries its full
     task graph, so it is parsed back to a workflow and re-rendered against the
     current worker image. A DAG that fails to parse or render is reported
     under ``failed`` and left untouched, so one bad DAG never aborts the batch.
+
+    Pass ``?prefix=<repo>`` to regenerate only one repo's DAGs — used to canary
+    a new worker image on a subset (e.g. bronze repos) before the whole fleet.
+    Omit it to regenerate every stored prefix.
     """
     if not _upload_lock.acquire(blocking=False):
         return JSONResponse(
@@ -340,7 +505,7 @@ async def regenerate() -> JSONResponse:
             status_code=503,
         )
     try:
-        result = await run_in_threadpool(_regenerate_all, settings)
+        result = await run_in_threadpool(_regenerate_all, settings, prefix)
     finally:
         _upload_lock.release()
     return JSONResponse(result)
@@ -679,12 +844,19 @@ def _build_code_tarball(code_dir: Path) -> bytes:
     return buf.getvalue()
 
 
-def _regenerate_all(cfg: ApiSettings) -> dict[str, Any]:
-    """Re-render every stored DAG in place; one bad DAG never aborts the batch."""
+def _regenerate_all(cfg: ApiSettings, only_prefix: str | None = None) -> dict[str, Any]:
+    """Re-render stored DAGs in place; one bad DAG never aborts the batch.
+
+    ``only_prefix`` limits the batch to a single repo's DAGs (canary path);
+    None regenerates every stored prefix.
+    """
     dag_store = _build_store(cfg)
     regenerated: list[str] = []
     failed: list[dict[str, str]] = []
-    for prefix in dag_store.list_prefixes():
+    prefixes = dag_store.list_prefixes()
+    if only_prefix is not None:
+        prefixes = [p for p in prefixes if p == only_prefix]
+    for prefix in prefixes:
         # A dev DAG keeps its dev target + suffix on regenerate; derive it from
         # the ``dev-`` prefix (the new env constants need not be parsed back).
         environment = "dev" if prefix.startswith("dev-") else "prod"

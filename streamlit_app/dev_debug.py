@@ -57,8 +57,11 @@ def render() -> None:
     if overdue:
         st.warning(
             "Stale pipelines: "
-            + ", ".join(f"{_STATE_ICON.get(v['state'], '')} `{v['pipeline_key']}` "
-                        f"({v['state']})" for v in overdue)
+            + ", ".join(
+                f"{_STATE_ICON.get(v['state'], '')} `{v['pipeline_key']}` "
+                f"({v['state']})"
+                for v in overdue
+            )
         )
 
     # --- Recent runs (run history) -----------------------------------------

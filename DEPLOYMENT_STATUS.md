@@ -26,18 +26,20 @@ Consolidated Kubernetes deployment from mixed Helm + custom approach to **single
 
 ```
 Single airflow namespace (all workloads):
-├── airflow-dags PVC (10Gi, RWO, nodeSelector pinned)
-├── PostgreSQL (metadata DB)
+├── airflow-dags-rwx PVC (ReadWriteMany, Filestore standard-rwx)
 ├── MongoDB (test data source)
-├── Scheduler, Triggerer, DAG Processor, WebServer (nodeSelector)
-├── Poorbricks API server (nodeSelector)
-└── All pods pinned to single node via: nodeSelector: poorbricks.io/dags=true
+├── Scheduler ×2, Triggerer ×2, WebServer ×2, DAG Processor ×1 (HA, anti-affinity)
+├── Poorbricks API server ×2 (HA, anti-affinity)
+└── Control plane spread across the on-demand pool (PodDisruptionBudgets)
 
-postgres namespace (unchanged):
-└── PostgreSQL analytics DB (silver/gold schemas)
+storage namespace:
+└── PostgreSQL (CNPG, 2 instances HA) — metadata DB + analytics (silver/gold)
 ```
 
-**Why single namespace**: Eliminates cross-namespace RBAC complexity. Single PVC shared by all DAG consumers. RWO constraint solved by node affinity (not Helm).
+**Why single namespace**: Eliminates cross-namespace RBAC complexity. The DAG
+volume is shared by all DAG consumers. Multi-node HA is enabled by a
+ReadWriteMany Filestore volume (replacing the old single-node RWO PVC, which
+forced every DAG-mounting pod onto one `poorbricks.io/dags`-labelled node).
 
 ## Next Steps
 
@@ -121,11 +123,21 @@ scripts/deploy_k8s.sh                   # Deployment orchestration (10 steps)
 
 ## Known Constraints
 
-1. **RWO PVC Single-Attach**: GKE RWO PVCs can only attach to one node. Solution: all DAG-touching pods pinned to same node via `nodeSelector: poorbricks.io/dags=true`. Not a production constraint—reflects single-node design choice.
+1. ~~**RWO PVC Single-Attach**~~ **(resolved)**: the DAG volume is now a
+   ReadWriteMany Filestore PVC (`airflow-dags-rwx`, `standard-rwx`), so the
+   control plane + API spread across the on-demand node pool and run as multiple
+   replicas. The old single-node `poorbricks.io/dags` pinning is gone. The spot
+   pool's taint keeps control-plane pods on on-demand nodes without a selector.
+   Migrate an existing cluster with `migrations/copy-dags-to-rwx.yaml`.
 
-2. **Airflow Scheduler Restarts**: Standard Airflow scheduler pods experience init timing issues. Solution: DAG discovery handled by DAG Processor (which works). If production scheduler needed, migrate to Cloud Composer or simpler event-driven trigger.
+2. **Multi-scheduler logs**: with 2 schedulers (LocalExecutor), each task's logs
+   live on the scheduler pod that ran it and are fetched via that pod's log
+   server (port 8793, stable headless-StatefulSet DNS). Robust, but consider
+   GCS remote logging now that RWX exists.
 
-3. **Manual Node Labeling**: Deploy script labels first node. If cluster scales, label new nodes manually or add to node pool template.
+3. **Manual Node Labeling**: no longer required for the DAG volume (RWX mounts on
+   any node). The `poorbricks.io/dags` label is only consulted by the one-shot
+   DAG-copy migration Job on an existing cluster.
 
 ## Key Commands
 

@@ -54,7 +54,15 @@ result = run('postgres:dim_patient', mode='validate')
 print(result.errors or ['OK'])
 "
 
-# Browse contracts + run tests in the Streamlit UI
+# Observability UI (Next.js + React — replaces Streamlit). Needs the FastAPI
+# server up (api/main.py on :8088). See web/README.md.
+cd web && npm install && npm run dev          # http://localhost:3000
+cd web && npm test                            # Vitest component tests (headless)
+cd web && CY_BROWSER=firefox npm run cy:e2e   # Cypress e2e (needs X / CI)
+# No-X sandbox fallback that drives conda Firefox via Selenium (23 checks):
+LD_LIBRARY_PATH=~/.mm/envs/browser/lib MOZ_HEADLESS=1 .venv/bin/python web/scripts/e2e_live.py
+
+# (legacy) Browse contracts + run tests in the old Streamlit UI
 poetry run streamlit run streamlit_app/app.py
 
 # Cross-table contract check (lineage-driven): fail if an upstream contract

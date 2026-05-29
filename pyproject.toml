@@ -141,6 +141,8 @@ module = [
     "croniter.*",
     "fastapi.*",
     "uvicorn.*",
+    "streamlit_agraph.*",
+    "altair.*",
 ]
 ignore_missing_imports = true
 

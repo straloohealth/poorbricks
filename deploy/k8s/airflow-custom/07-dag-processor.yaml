@@ -19,8 +19,18 @@ spec:
     spec:
       serviceAccountName: airflow
       restartPolicy: Always
-      nodeSelector:
-        poorbricks.io/dags: "true"
+      # De-pinned from poorbricks.io/dags now that the DAG dir is RWX. Kept at 1
+      # replica (a node loss reschedules it onto another on-demand node; the
+      # parsing gap is brief). The anti-affinity below only bites if scaled >1.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    component: dag-processor
+                topologyKey: kubernetes.io/hostname
       containers:
       - name: dag-processor
         image: apache/airflow:3.2.0
@@ -76,7 +86,7 @@ spec:
       volumes:
       - name: dags
         persistentVolumeClaim:
-          claimName: airflow-dags
+          claimName: airflow-dags-rwx
       - name: logs
         emptyDir:
           sizeLimit: 500Mi

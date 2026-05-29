@@ -22,8 +22,10 @@ spec:
         app: poorbricks-streamlit
     spec:
       serviceAccountName: poorbricks-streamlit
-      nodeSelector:
-        poorbricks.io/dags: "true"
+      # De-pinned from the poorbricks.io/dags node — this legacy UI doesn't mount
+      # the DAG PVC, so it was only pinned incidentally. The spot taint keeps it
+      # on the on-demand pool. Left at 1 replica (legacy, being replaced by the
+      # Next.js UI).
       containers:
         - name: streamlit
           # Shares the api image; {{IMAGE_TAG}} is replaced with the commit

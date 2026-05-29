@@ -12,7 +12,12 @@ metadata:
     # in its env and crashes on the next DB connection attempt.
     reloader.stakater.com/auto: "true"
 spec:
-  replicas: 1
+  # HA: 2 replicas behind the poorbricks-server Service. Worker pods fetch their
+  # code tarball from this API (/v1/code) on every task, and it serves the
+  # observability API — a single replica is a SPOF. Both replicas mount the RWX
+  # DAG volume read/write; /v1/upload writes are per-prefix and infrequent, so
+  # concurrent writes from two replicas don't realistically collide.
+  replicas: 2
   selector:
     matchLabels:
       app: poorbricks-server
@@ -22,8 +27,18 @@ spec:
         app: poorbricks-server
     spec:
       serviceAccountName: poorbricks-server
-      nodeSelector:
-        poorbricks.io/dags: "true"
+      # De-pinned from the single poorbricks.io/dags node: the DAG dir is now
+      # RWX (airflow-dags-rwx) so this can spread across the on-demand pool. The
+      # spot taint keeps it off preemptible nodes without an explicit selector.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: poorbricks-server
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: api
           # {{IMAGE_TAG}} is replaced with the commit SHA by the orb's
@@ -110,4 +125,4 @@ spec:
       volumes:
         - name: dags
           persistentVolumeClaim:
-            claimName: airflow-dags
+            claimName: airflow-dags-rwx

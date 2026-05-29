@@ -419,7 +419,9 @@ class TestDeploymentManifests:
     """Verify K8s deployment manifests use PVC and local DAG store."""
 
     def test_pvc_yaml_exists_and_is_valid(self) -> None:
-        """deploy/k8s/airflow-custom/00-pvc.yaml must exist and declare airflow-dags PVC."""
+        """Legacy 00-pvc.yaml (ReadWriteOnce airflow-dags) — kept for the
+        single-node→RWX migration; superseded by airflow-dags-rwx (see
+        test_rwx_pvc_yaml_exists_and_is_valid)."""
         import yaml
 
         pvc_path = Path("deploy/k8s/airflow-custom/00-pvc.yaml")
@@ -443,6 +445,34 @@ class TestDeploymentManifests:
         storage = spec.get("resources", {}).get("requests", {}).get("storage")
         assert storage is not None and storage.endswith(("Gi", "Mi")), (
             "PVC must declare storage request (e.g., 10Gi)"
+        )
+
+    def test_rwx_pvc_yaml_exists_and_is_valid(self) -> None:
+        """deploy/k8s/airflow-custom/00-pvc-rwx.yaml must declare the
+        ReadWriteMany Filestore DAG PVC that the control plane + API now mount,
+        enabling multi-node HA."""
+        import yaml
+
+        pvc_path = Path("deploy/k8s/airflow-custom/00-pvc-rwx.yaml")
+        assert pvc_path.exists(), "00-pvc-rwx.yaml not found"
+
+        pvc = yaml.safe_load(pvc_path.read_text())
+        assert pvc["kind"] == "PersistentVolumeClaim"
+        assert pvc["metadata"]["name"] == "airflow-dags-rwx", (
+            "RWX PVC must be named 'airflow-dags-rwx'"
+        )
+        assert pvc["metadata"]["namespace"] == "airflow"
+
+        spec = pvc["spec"]
+        assert spec.get("accessModes") == ["ReadWriteMany"], (
+            "RWX PVC must be ReadWriteMany (shared across nodes)"
+        )
+        assert spec.get("storageClassName") == "standard-rwx", (
+            "RWX PVC must use the Filestore 'standard-rwx' storage class"
+        )
+        storage = spec.get("resources", {}).get("requests", {}).get("storage")
+        assert storage is not None and storage.endswith(("Gi", "Mi")), (
+            "RWX PVC must declare a storage request"
         )
 
     def test_api_deployment_uses_local_dag_store(self) -> None:
@@ -481,7 +511,12 @@ class TestDeploymentManifests:
         assert "persistentVolumeClaim" in volumes["dags"], (
             "'dags' volume must be persistentVolumeClaim"
         )
-        assert volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags"
+        # ReadWriteMany Filestore claim (00-pvc-rwx.yaml) so the API can run as
+        # multiple replicas across nodes; the old ReadWriteOnce 'airflow-dags'
+        # pinned every DAG-mounting pod to a single node.
+        assert (
+            volumes["dags"]["persistentVolumeClaim"]["claimName"] == "airflow-dags-rwx"
+        )
 
     def test_api_ingress_uses_tailscale(self) -> None:
         """deploy/k8s/api/ingress.yaml must define Tailscale Ingress."""
