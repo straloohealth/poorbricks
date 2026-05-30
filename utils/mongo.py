@@ -9,6 +9,7 @@ bounded no matter how large the collection is.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -79,7 +80,10 @@ def _resolve_id_field(schema: StructType) -> str | None:
 
 
 def _prepare_doc(
-    doc: dict[str, Any], id_field: str | None, field_names: list[str]
+    doc: dict[str, Any],
+    id_field: str | None,
+    field_names: list[str],
+    string_fields: frozenset[str] = frozenset(),
 ) -> tuple[Any, ...]:
     """Map one raw MongoDB document to a schema-ordered tuple.
 
@@ -87,6 +91,12 @@ def _prepare_doc(
     renames (top-level when the snake form is a schema field, and recursively
     inside every nested sub-document), and BSON-type sanitisation. Returns
     values ordered to match ``field_names``.
+
+    A nested object/array destined for a **StringType** field (``string_fields``)
+    is JSON-encoded — preserving the ORIGINAL keys so a downstream
+    ``get_json_object(col, '$.templateId')`` resolves — rather than handed to
+    ``createDataFrame`` as a dict, which Spark stringifies to a non-JSON map
+    literal ``{k=v}`` (every ``get_json_object`` then returns null).
     """
     field_set = set(field_names)
     mapped: dict[str, Any] = {}
@@ -99,9 +109,16 @@ def _prepare_doc(
             mapped[snake] = value
         else:
             mapped[key] = value
-    return tuple(
-        _sanitize_value(_snake_case_keys(mapped.get(name))) for name in field_names
-    )
+    out: list[Any] = []
+    for name in field_names:
+        raw = mapped.get(name)
+        if name in string_fields and isinstance(raw, (dict, list)):
+            out.append(
+                json.dumps(_sanitize_value(raw), ensure_ascii=False, default=str)
+            )
+        else:
+            out.append(_sanitize_value(_snake_case_keys(raw)))
+    return tuple(out)
 
 
 def _resolve_partition_bounds(
@@ -141,6 +158,7 @@ def _make_range_reader(
     collection_name: str,
     id_field: str | None,
     field_names: list[str],
+    string_fields: frozenset[str] = frozenset(),
 ) -> Callable[[tuple[Any, Any, bool]], Iterator[tuple[Any, ...]]]:
     """Build the ``flatMap`` function that reads one ``_id`` range on an executor."""
 
@@ -155,7 +173,7 @@ def _make_range_reader(
         client: pm.MongoClient = pm.MongoClient(mongo_uri)
         try:
             for doc in client[db_name][collection_name].find(query):
-                yield _prepare_doc(doc, id_field, field_names)
+                yield _prepare_doc(doc, id_field, field_names, string_fields)
         finally:
             client.close()
 
@@ -191,6 +209,9 @@ def get_all(
 
     field_names = [field.name for field in schema.fields]
     id_field = _resolve_id_field(schema)
+    string_fields = frozenset(
+        f.name for f in schema.fields if "StringType" in str(f.dataType)
+    )
     bounds = _resolve_partition_bounds(
         mongo_uri, db_name, collection_name, settings.read_partitions
     )
@@ -198,7 +219,7 @@ def get_all(
         return spark.createDataFrame([], schema)
 
     read_range = _make_range_reader(
-        mongo_uri, db_name, collection_name, id_field, field_names
+        mongo_uri, db_name, collection_name, id_field, field_names, string_fields
     )
     rows_rdd = spark.sparkContext.parallelize(bounds, len(bounds)).flatMap(read_range)
     return spark.createDataFrame(rows_rdd, schema)
