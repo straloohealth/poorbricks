@@ -1,0 +1,5 @@
+node_modules
+.next
+cypress/screenshots
+cypress/videos
+*.log

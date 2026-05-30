@@ -23,8 +23,12 @@ from datetime import datetime
 
 from poorbricks.constants import (
     DEFAULT_CODE_API_URL,
+    DEFAULT_CONTRACTS_API_URL,
     DEFAULT_NAMESPACE,
     DEFAULT_POSTGRES_CREDS_SECRET_NAME,
+    DEFAULT_POSTGRES_DB,
+    DEFAULT_POSTGRES_HOST,
+    DEFAULT_POSTGRES_PORT,
     DEFAULT_RUNTIME_SECRET_NAME,
 )
 
@@ -56,6 +60,15 @@ def generate_dag_file(
     postgres_creds_secret: str = DEFAULT_POSTGRES_CREDS_SECRET_NAME,
     code_api_url: str = DEFAULT_CODE_API_URL,
     start_year: int | None = None,
+    sha: str | None = None,
+    environment: str = "prod",
+    schema_suffix: str = "",
+    postgres_host: str = DEFAULT_POSTGRES_HOST,
+    postgres_port: str = DEFAULT_POSTGRES_PORT,
+    postgres_db: str = DEFAULT_POSTGRES_DB,
+    contracts_api_url: str = DEFAULT_CONTRACTS_API_URL,
+    retries: int = 2,
+    retry_delay_minutes: int = 2,
 ) -> str:
     """Render Python source for an Airflow DAG.
 
@@ -75,6 +88,17 @@ def generate_dag_file(
         code_api_url: base URL of the api-server the init container fetches
             table code from.
         start_year: ``DAG.start_date`` year override (test hook).
+        sha: git SHA of the uploaded table-repo; injected as ``POORBRICKS_SHA``
+            so each run record is attributable to a commit.
+        environment: ``"prod"`` or ``"dev"``; injected as ``POORBRICKS_ENV`` and
+            stamped on every run record.
+        schema_suffix: appended to the destination Postgres schema (e.g.
+            ``"__dev"`` → writes land in ``silver__dev``); injected as
+            ``POORBRICKS_SCHEMA_SUFFIX``. Empty for prod.
+        postgres_host / postgres_port / postgres_db: worker Postgres target.
+            Defaults are the in-cluster prod database; a dev upload overrides
+            them (or relies on ``schema_suffix`` alone).
+        contracts_api_url: base URL workers resolve ``ContractSource`` from.
     """
     _validate_prefix(prefix)
     dag_id = f"{prefix}__{workflow.name}"
@@ -92,8 +116,15 @@ def generate_dag_file(
             runtime_secret=runtime_secret,
             postgres_creds_secret=postgres_creds_secret,
             code_api_url=code_api_url,
+            sha=sha or "",
+            environment=environment,
+            schema_suffix=schema_suffix,
+            postgres_host=postgres_host,
+            postgres_port=postgres_port,
+            postgres_db=postgres_db,
+            contracts_api_url=contracts_api_url,
         ),
-        _render_dag(),
+        _render_dag(retries=retries, retry_delay_minutes=retry_delay_minutes),
         _render_volumes_and_env(),
         _render_build_task(),
         _render_tasks(workflow.tasks),
@@ -136,6 +167,13 @@ def _render_constants(
     runtime_secret: str,
     postgres_creds_secret: str,
     code_api_url: str,
+    sha: str,
+    environment: str,
+    schema_suffix: str,
+    postgres_host: str,
+    postgres_port: str,
+    postgres_db: str,
+    contracts_api_url: str,
 ) -> str:
     return (
         f"DAG_ID = {dag_id!r}\n"
@@ -144,30 +182,40 @@ def _render_constants(
         f"SCHEDULE = {schedule!r}  # None = manual trigger only\n"
         f"START_DATE = datetime({year}, 1, 1)\n"
         f"IMAGE = {image!r}\n"
+        f"SHA = {sha!r}\n"
+        f"ENVIRONMENT = {environment!r}\n"
+        f"SCHEMA_SUFFIX = {schema_suffix!r}\n"
         f"RUNTIME_SECRET = {runtime_secret!r}\n"
         f"POSTGRES_CREDS_SECRET = {postgres_creds_secret!r}\n"
+        f"POSTGRES_HOST = {postgres_host!r}\n"
+        f"POSTGRES_PORT = {postgres_port!r}\n"
+        f"POSTGRES_DB = {postgres_db!r}\n"
+        f"CONTRACTS_API_URL = {contracts_api_url!r}\n"
         f"CODE_TARBALL_URL = {f'{code_api_url}/v1/code/{prefix}'!r}\n"
     )
 
 
-def _render_dag() -> str:
-    return textwrap.dedent(
-        """\
+def _render_dag(retries: int = 2, retry_delay_minutes: int = 2) -> str:
+    return (
+        textwrap.dedent(
+            """\
         dag = DAG(
             dag_id=DAG_ID,
             schedule=SCHEDULE,
             start_date=START_DATE,
             catchup=False,
             max_active_runs=1,
-            # TODO(revert when stable): retries temporarily disabled so
-            # failed tasks surface their error in ~30s instead of ~6min
-            # while we chase the post-bootstrap gold-pipeline issues.
-            # Original: {"retries": 2, "retry_delay": timedelta(minutes=2)}.
-            default_args={"retries": 0},
+            # Retries cover Spot-VM evictions: a preempted task reschedules onto
+            # another node. The write path stages into a temp table and swaps it
+            # in atomically, so a retried/evicted task never double-writes.
+            default_args={"retries": __RETRIES__, "retry_delay": timedelta(minutes=__RETRY_DELAY_MINUTES__)},
             tags=[PREFIX, "poorbricks"],
             is_paused_upon_creation=False,
         )
         """
+        )
+        .replace("__RETRIES__", str(retries))
+        .replace("__RETRY_DELAY_MINUTES__", str(retry_delay_minutes))
     )
 
 
@@ -301,15 +349,18 @@ def _render_volumes_and_env() -> str:
                     )
                 ),
             ),
-            k8s.V1EnvVar(name="POSTGRES_HOST", value="postgresql-rw.storage.svc.cluster.local"),
-            k8s.V1EnvVar(name="POSTGRES_PORT", value="5432"),
-            k8s.V1EnvVar(name="POSTGRES_DB", value="poorbricks"),
+            k8s.V1EnvVar(name="POSTGRES_HOST", value=POSTGRES_HOST),
+            k8s.V1EnvVar(name="POSTGRES_PORT", value=POSTGRES_PORT),
+            k8s.V1EnvVar(name="POSTGRES_DB", value=POSTGRES_DB),
             # In-cluster workers have no Tailscale; ContractSource must reach
             # the poorbricks server over the cluster Service, not *.ts.net.
-            k8s.V1EnvVar(
-                name="CONTRACTS_API_URL",
-                value="http://poorbricks-server.airflow.svc.cluster.local:8080",
-            ),
+            k8s.V1EnvVar(name="CONTRACTS_API_URL", value=CONTRACTS_API_URL),
+            # Run-instrumentation context: stamped on every run-history record
+            # and used to namespace dev writes via the schema suffix.
+            k8s.V1EnvVar(name="POORBRICKS_ENV", value=ENVIRONMENT),
+            k8s.V1EnvVar(name="POORBRICKS_SHA", value=SHA),
+            k8s.V1EnvVar(name="POORBRICKS_SCHEMA_SUFFIX", value=SCHEMA_SUFFIX),
+            k8s.V1EnvVar(name="POORBRICKS_PREFIX", value=PREFIX),
         ]
         """
     )

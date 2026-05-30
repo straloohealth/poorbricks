@@ -1,0 +1,12 @@
+# Keep the Cloud Build context small. The api/Dockerfile only COPYs
+# pyproject/poetry.lock + poorbricks/ validation/ utils/ api/ tables/ streamlit_app/.
+.git/
+.venv/
+web/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+test-results/
+*.tgz
+*.log

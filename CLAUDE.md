@@ -54,9 +54,58 @@ result = run('postgres:dim_patient', mode='validate')
 print(result.errors or ['OK'])
 "
 
-# Browse contracts + run tests in the Streamlit UI
+# Observability UI (Next.js + React — replaces Streamlit). Needs the FastAPI
+# server up (api/main.py on :8088). See web/README.md.
+cd web && npm install && npm run dev          # http://localhost:3000
+cd web && npm test                            # Vitest component tests (headless)
+cd web && CY_BROWSER=firefox npm run cy:e2e   # Cypress e2e (needs X / CI)
+# No-X sandbox fallback that drives conda Firefox via Selenium (23 checks):
+LD_LIBRARY_PATH=~/.mm/envs/browser/lib MOZ_HEADLESS=1 .venv/bin/python web/scripts/e2e_live.py
+
+# (legacy) Browse contracts + run tests in the old Streamlit UI
 poetry run streamlit run streamlit_app/app.py
+
+# Cross-table contract check (lineage-driven): fail if an upstream contract
+# change dropped/retyped a column a downstream consumes. Also runs
+# automatically at the end of `pytest` via the bundled pytest plugin.
+poetry run poorbricks verify --mode contract
+
+# Alert on pipelines that stopped running (reads run history + DAG cadences)
+poetry run poorbricks monitor-staleness
+
+# Upload to a DEV environment: namespaces the DAG as `dev-<prefix>` and writes
+# to a `*__dev` Postgres schema — runs on the shared Airflow without touching
+# prod tables or contracts.
+poetry run poorbricks upload --env dev --prefix <repo> --sha <sha> --watch
+
+# Local web-debug loop (server + Streamlit against compose Mongo/Postgres)
+docker-compose --profile dev up
 ```
+
+## Resilience & observability
+
+Every `run_and_persist` is instrumented (see `poorbricks/persist.py`):
+
+- **Run history** — each run is recorded in `poorbricks_meta.run_history`
+  (Postgres) via `poorbricks/run_history.py`; a denormalized `last_run` is also
+  written into the Mongo contract. Exposed at `GET /v1/runs`.
+- **Column lineage** — captured at runtime from the Spark analyzed plan
+  (`poorbricks/lineage_runtime.py`) and stored in the contract `lineage` field;
+  consumed by `verify --mode contract`.
+- **Row-count anomaly** (`poorbricks/anomaly.py`) + **regression-vs-prior**
+  (`poorbricks/regression/prior.py`, snapshots to `poorbricks_meta.<t>__prev`) +
+  **stale-data** (`poorbricks/staleness.py`, `GET /v1/staleness`) — alerts go
+  through a pluggable sink (`poorbricks/alerting.py`; Slack via
+  `SLACK_WEBHOOK_URL`, no-op under tests). Tune per pipeline via the
+  `ROW_COUNT_ANOMALY_*` / `REGRESSION_*` attributes on `Expectations`.
+- **Arch checks** — `verify --mode arch` now also fails on stub columns; literal
+  columns are flagged `is_literal` on the contract (info badge in the UI).
+- **Pipeline removal** — `POST /v1/upload` prunes both DAGs and orphaned
+  contracts for the repo's prefix (a contract still consumed elsewhere is kept
+  with a warning).
+- **Spot resilience** — generated DAGs retry (default 2; dev DAGs fast-fail);
+  the Postgres write is idempotent (staging + atomic swap), so a retried/evicted
+  task never double-writes.
 
 ## Architecture
 

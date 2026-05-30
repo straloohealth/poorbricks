@@ -1,0 +1,31 @@
+# ReadWriteMany DAG volume on Filestore. Replaces the single-node ReadWriteOnce
+# `airflow-dags` PVC (00-pvc.yaml): a RWO GCE-PD attaches to exactly one node, so
+# every component that mounts it (scheduler, dag-processor, api-server, the
+# poorbricks-server API) was forced onto the one node labelled
+# poorbricks.io/dags=true and could not run >1 replica. Filestore RWX lets the
+# DAG dir be mounted read/write across all of the on-demand nodes at once, which
+# unblocks multi-node / multi-replica HA for the control plane.
+#
+# Mirrors the existing Filestore RWX volume in the cluster
+# (vibe-projects/vibe-sandbox-cache): storageClassName=standard-rwx, RWM. A 50Gi
+# request binds to Filestore's ~100Gi minimum; the DAG dir itself is tiny.
+#
+# accessModes / storageClassName on a *bound* PVC are immutable, which is why
+# this is a new claim (airflow-dags-rwx) rather than an edit to airflow-dags.
+# The old PVC is migrated via migrations/copy-dags-to-rwx.yaml, then deleted
+# once cutover is verified.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-dags-rwx
+  namespace: airflow
+  labels:
+    app.kubernetes.io/part-of: poorbricks
+    app.kubernetes.io/component: dags
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: standard-rwx
+  resources:
+    requests:
+      storage: 50Gi

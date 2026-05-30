@@ -31,11 +31,34 @@ class MongoSource:
     """Declares a MongoDB upstream.
 
     Connection is resolved from MONGO_URI in the environment (or .env).
+
+    ``nullable_columns`` lists columns whose source values may be null/missing
+    even though the contract declares them non-nullable. The *read* relaxes
+    those to nullable so one bad source document never aborts the whole read;
+    the pipeline then imputes them via ``Expectations.IMPUTE_DEFAULTS`` (which
+    also records a non-critical warning), keeping the contract non-nullable.
     """
 
     db: str
     collection: str
     schema: StructType
+    nullable_columns: tuple[str, ...] = ()
+
+    @property
+    def read_schema(self) -> StructType:
+        """The schema used to read Mongo: ``schema`` with ``nullable_columns``
+        relaxed to nullable. Identical to ``schema`` when none are declared."""
+        if not self.nullable_columns:
+            return self.schema
+        from pyspark.sql.types import StructField, StructType
+
+        relax = set(self.nullable_columns)
+        return StructType(
+            [
+                StructField(f.name, f.dataType, nullable=True) if f.name in relax else f
+                for f in self.schema.fields
+            ]
+        )
 
 
 @dataclass(frozen=True)

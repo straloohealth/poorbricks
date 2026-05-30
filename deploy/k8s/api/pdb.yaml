@@ -1,0 +1,15 @@
+# Keep at least one poorbricks-server replica available through voluntary
+# disruptions (node drains/upgrades). Worker pods fetch their code from this
+# API on every task, so it must not drop to zero during maintenance.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: poorbricks-server
+  namespace: airflow
+  labels:
+    app: poorbricks-server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: poorbricks-server

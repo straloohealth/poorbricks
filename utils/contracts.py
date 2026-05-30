@@ -123,10 +123,103 @@ def list_contract_details() -> list[dict[str, Any]]:
             "comment": 1,
             "pushed_at": 1,
             "inputs": 1,
+            "prefix": 1,
+            "lineage.consumed": 1,
             "profile.row_count": 1,
         },
     )
     return list(cursor)
+
+
+def list_contract_analysis() -> list[dict[str, Any]]:
+    """All contracts with just the fields the verification analysis reads, in a
+    SINGLE query.
+
+    The per-contract analysis inputs (``lineage.columns`` sources,
+    ``fields.is_literal``, ``profile.null_rates``, ``lineage.consumed``) are
+    already computed and stored when each pipeline runs — pre-processed at write
+    time. This reads them in bulk (one ``find`` instead of one
+    ``fetch_contract_from_mongo`` per contract), so ``/v1/verification`` is fast
+    at prod scale.
+    """
+    from poorbricks.settings import settings
+
+    cursor = _client()[settings.contracts_db][settings.contracts_collection].find(
+        {},
+        {
+            "table_name": 1,
+            "schema_json": 1,
+            "lineage.columns": 1,
+            "lineage.consumed": 1,
+            "fields.name": 1,
+            "fields.is_literal": 1,
+            "profile.null_rates": 1,
+            "imputations": 1,
+        },
+    )
+    return list(cursor)
+
+
+def delete_contract(table_name: str) -> bool:
+    """Delete a single contract by table name. Returns True if one was removed."""
+    from poorbricks.settings import settings
+
+    result = _client()[settings.contracts_db][settings.contracts_collection].delete_one(
+        {"_id": table_name}
+    )
+    return result.deleted_count > 0
+
+
+def set_field_descriptions(
+    table_name: str, descriptions: dict[str, str], overwrite: bool = False
+) -> int:
+    """Attach human/LLM-readable field descriptions to a contract.
+
+    Fills ``fields[].description`` for matching columns (only where empty unless
+    ``overwrite``) and mirrors everything into a top-level ``field_descriptions``
+    map so cosmo/LLMs can read intent straight from the contract. Additive and
+    back-compatible — never removes existing data. Returns the count applied.
+    """
+    from poorbricks.settings import settings
+
+    coll = _client()[settings.contracts_db][settings.contracts_collection]
+    doc = coll.find_one({"_id": table_name}) or coll.find_one(
+        {"table_name": table_name}
+    )
+    if not doc:
+        return 0
+    fields = doc.get("fields") or []
+    applied = 0
+    for fld in fields:
+        name = fld.get("name")
+        if name in descriptions and (overwrite or not fld.get("description")):
+            fld["description"] = descriptions[name]
+            applied += 1
+    fd = dict(doc.get("field_descriptions") or {})
+    fd.update(descriptions)
+    coll.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"fields": fields, "field_descriptions": fd}},
+    )
+    return applied
+
+
+def prune_contracts(prefix: str, keep: set[str]) -> list[str]:
+    """Delete contracts owned by ``prefix`` whose table_name is not in ``keep``.
+
+    Strictly scoped to ``{"prefix": prefix}`` so one repo's upload can never
+    remove another repo's contracts. The caller is responsible for including
+    any still-consumed tables in ``keep`` (the cross-repo safety guard).
+    Returns the sorted list of deleted table names.
+    """
+    from poorbricks.settings import settings
+
+    coll = _client()[settings.contracts_db][settings.contracts_collection]
+    owned = {doc["_id"] for doc in coll.find({"prefix": prefix}, {"_id": 1})}
+    to_delete = sorted(owned - keep)
+    for table_name in to_delete:
+        coll.delete_one({"_id": table_name})
+    return to_delete
 
 
 def profile_dataframe(df: DataFrame) -> dict[str, Any]:
@@ -170,6 +263,10 @@ def push_contract(
     expectations: dict[str, Any] | None = None,
     inputs: list[dict[str, Any]] | None = None,
     fixtures: list[dict[str, Any]] | None = None,
+    prefix: str = "",
+    lineage: dict[str, Any] | None = None,
+    last_run: dict[str, Any] | None = None,
+    imputations: dict[str, int] | None = None,
 ) -> None:
     """Upsert a contract document into the contracts collection.
 
@@ -177,6 +274,11 @@ def push_contract(
     render fields, expectations, inputs, fixtures, and sample data without
     importing pipeline code. The profile is used as a baseline for future
     drift detection.
+
+    ``prefix`` attributes the contract to its owning table-repo (used by
+    pipeline-removal cleanup). ``lineage`` carries column-level provenance
+    captured from the Spark plan. ``last_run`` is a denormalized summary of
+    the most recent run (for cheap status reads without a Postgres round-trip).
     """
     from poorbricks.settings import settings
 
@@ -190,12 +292,19 @@ def push_contract(
         "storage": storage,
         "comment": comment,
         "module": module,
+        "prefix": prefix,
         "fields": fields or [],
         "validation_rules": validation_rules or [],
         "expectations": expectations or {},
         "inputs": inputs or [],
         "fixtures": fixtures or [],
+        "lineage": lineage or {},
+        "last_run": last_run or {},
         "profile": profile,
+        # {column: imputed_row_count} for non-nullable columns whose source
+        # nulls were defaulted (see Expectations.IMPUTE_DEFAULTS). /v1/verification
+        # raises a non-critical warning when any count is > 0.
+        "imputations": imputations or {},
         "pushed_at": datetime.utcnow().isoformat(),
     }
     _client()[settings.contracts_db][settings.contracts_collection].replace_one(
@@ -226,10 +335,12 @@ def _bson_safe(value: Any) -> Any:
 
 
 __all__ = [
+    "delete_contract",
     "fetch_contract",
     "fetch_contract_from_mongo",
     "list_contract_details",
     "list_contracts",
     "profile_dataframe",
+    "prune_contracts",
     "push_contract",
 ]

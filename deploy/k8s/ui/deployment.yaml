@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poorbricks-ui
+  namespace: airflow
+  labels:
+    app: poorbricks-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: poorbricks-ui
+  template:
+    metadata:
+      labels:
+        app: poorbricks-ui
+    spec:
+      serviceAccountName: poorbricks-ui
+      containers:
+        - name: ui
+          # Next.js standalone server; {{IMAGE_TAG}} replaced at apply time.
+          image: gcr.io/inner-autonomy-371516/poorbricks/ui:{{IMAGE_TAG}}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30

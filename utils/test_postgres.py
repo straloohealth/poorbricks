@@ -19,12 +19,44 @@ from pyspark.sql.types import (
 
 from utils.postgres import (
     PostgresLoader,
+    _connect_with_retry,
     _encode_copy_row,
     _encode_copy_value,
     _RowCopyReader,
 )
 
 TEST_SCHEMA = "test_ooc"
+
+
+def test_connect_with_retry_waits_out_connection_saturation(monkeypatch):
+    """A transient 'remaining connection slots'/'too many clients' error makes
+    connect back off and retry rather than fail the run (write resilience)."""
+    calls = {"n": 0}
+
+    def fake_connect(**_kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise psycopg2.OperationalError(
+                "FATAL: remaining connection slots are reserved"
+            )
+        return "CONN"
+
+    monkeypatch.setattr(psycopg2, "connect", fake_connect)
+    monkeypatch.setattr("utils.postgres.time.sleep", lambda *_: None)
+    assert _connect_with_retry(host="h") == "CONN"
+    assert calls["n"] == 3  # retried twice, then succeeded
+
+
+def test_connect_with_retry_reraises_non_saturation_errors(monkeypatch):
+    """Real errors (bad creds, host down) surface immediately, not masked."""
+
+    def fake_connect(**_kw):
+        raise psycopg2.OperationalError("FATAL: password authentication failed")
+
+    monkeypatch.setattr(psycopg2, "connect", fake_connect)
+    monkeypatch.setattr("utils.postgres.time.sleep", lambda *_: None)
+    with pytest.raises(psycopg2.OperationalError, match="password"):
+        _connect_with_retry(host="h")
 
 _DF_SCHEMA = StructType(
     [

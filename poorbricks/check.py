@@ -82,7 +82,9 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
-    schema = meta.level
+    # Honour the dev schema suffix so a dev DAG's check task reads the dev table
+    # (e.g. ``silver__dev``) rather than the prod one.
+    schema = f"{meta.level}{settings.schema_suffix}"
     table = _pg_table_name(meta.table_name)
     fq = f"{schema}.{table}"
 

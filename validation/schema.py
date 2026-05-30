@@ -150,8 +150,17 @@ def model_to_struct(model_class: type[BaseModel]) -> StructType:
         # Convert Python type to Spark type
         spark_type = _python_type_to_spark_type(field_type)
 
+        # Carry the pydantic Field(description=...) into the StructField
+        # metadata so it round-trips through ``.jsonValue()`` into the
+        # published contract, where cosmo and the Streamlit UI render it.
+        metadata = (
+            {"description": field_info.description} if field_info.description else None
+        )
+
         # Create StructField
-        fields.append(StructField(field_name, spark_type, is_nullable))
+        fields.append(
+            StructField(field_name, spark_type, is_nullable, metadata=metadata)
+        )
 
     return StructType(fields)
 

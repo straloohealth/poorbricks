@@ -39,35 +39,37 @@ SCENARIO_NAMES = (
 pytestmark = pytest.mark.xdist_group("multi_repo")
 
 
+def _evict_tables_modules() -> None:
+    """Drop the ``tables`` package (and every submodule) from the import cache.
+
+    ``tables`` is a *regular* package in both this repo and ``test_table_repo``,
+    so Python caches it as a single module pointing at whichever root imported
+    it first. Under xdist a sibling main-repo test can cache ``tables`` →
+    framework repo; without evicting it, this repo's discovery would resolve
+    ``tables.<scenario>`` against the wrong directory. Evicting on both entry
+    and exit keeps each test hermetic regardless of worker scheduling.
+    """
+    for name in list(sys.modules):
+        if name == "tables" or name.startswith("tables."):
+            del sys.modules[name]
+
+
 @pytest.fixture(autouse=True)
 def _clear_registry_and_modules() -> Iterator[None]:
-    """Isolate global pipeline + scenario registries around each test.
+    """Give each test in this module a clean slate to discover ``test_table_repo``.
 
-    Snapshot the dicts on entry, replace them with empty copies so the
-    test gets a clean slate, then restore on exit. Restoring (rather than
-    clearing) keeps registrations from sibling test modules intact when
-    pytest-xdist routes them to the same worker.
+    The registry must be empty and the ``tables`` import cache evicted so
+    ``discover_all_pipelines(test_table_repo)`` resolves to this repo's
+    fixtures (not a sibling main-repo ``tables`` cached on the same xdist
+    worker). The global ``conftest`` safety net rolls these mutations back
+    after the test, so this fixture only needs to set up the clean slate.
     """
     from poorbricks import registry as _registry
 
-    saved_pipelines = dict(_registry._pipelines)
-    saved_scenarios = {k: dict(v) for k, v in _registry._scenarios.items()}
-
     _registry._pipelines.clear()
     _registry._scenarios.clear()
-    for name in list(sys.modules):
-        if any(
-            name == f"tables.{s}" or name.startswith(f"tables.{s}.")
-            for s in SCENARIO_NAMES
-        ):
-            del sys.modules[name]
-    try:
-        yield
-    finally:
-        _registry._pipelines.clear()
-        _registry._pipelines.update(saved_pipelines)
-        _registry._scenarios.clear()
-        _registry._scenarios.update(saved_scenarios)
+    _evict_tables_modules()
+    yield
 
 
 def _smith_users_contract() -> dict[str, Any]:

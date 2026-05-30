@@ -16,6 +16,7 @@ Tailscale HTTP proxy.
 
 from __future__ import annotations
 
+import hmac
 import io
 import json
 import re
@@ -30,8 +31,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from poorbricks.airflow import (
@@ -48,8 +50,18 @@ from .config import ApiSettings, settings
 
 app = FastAPI(title="poorbricks-server", version="0.1.0")
 
+# The Next.js dev server (and the static export) call this API cross-origin.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SHA_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
+_DAG_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _upload_lock = threading.Lock()
 _upload_status: dict[str, Any] = {
     "phase": "idle",
@@ -160,14 +172,451 @@ def stats_endpoint() -> dict[str, Any]:
     }
 
 
+@app.get("/v1/runs")
+def runs_endpoint(limit: int = 100) -> list[dict[str, Any]]:
+    """Recent pipeline runs from the run-history store (web-debug timeline).
+
+    Read-only. Returns the most recent runs across all pipelines, newest
+    first, so the UI can show what ran, when, and with what outcome.
+    """
+    from dataclasses import asdict
+
+    from poorbricks.run_history import RunHistoryStore
+
+    bounded = max(1, min(limit, 1000))
+    records = RunHistoryStore().recent(limit=bounded)
+    out: list[dict[str, Any]] = []
+    for rec in records:
+        row = asdict(rec)
+        # Datetimes → ISO strings so the payload is JSON-serializable.
+        for key in ("started_at", "finished_at"):
+            value = row.get(key)
+            if value is not None and hasattr(value, "isoformat"):
+                row[key] = value.isoformat()
+        out.append(row)
+    return out
+
+
+def _error_headline(err: str | None) -> str:
+    """Collapse a (possibly multi-line) error/stacktrace to one readable line.
+
+    Prefers the deepest ``Xxx(Error|Exception): msg`` or a Spark ``[ERROR_CODE]``
+    line over the raw traceback head; strips a leading ``[base]`` worker-log
+    prefix. The full text is preserved in run_history and served by /v1/errors.
+    """
+    if not err:
+        return "run failed"
+    lines = [ln.strip() for ln in err.splitlines() if ln.strip()]
+    if not lines:
+        return "run failed"
+
+    def _clean(ln: str) -> str:
+        return re.sub(r"^\[\w+\]\s*", "", ln)[:240]  # drop '[base] ' worker prefix
+
+    # query-plan tree fragments are noise, never a useful headline
+    def _is_plan(ln: str) -> bool:
+        return bool(
+            re.match(r"[+:|=]", ln.lstrip("[base] ").strip())
+            or re.search(r"#\d+\b", ln)  # attribute refs like patient_id#0
+            or re.search(r"\b(LogicalRDD|Relation|Project|Filter|Join)\b", ln)
+        )
+
+    usable = [ln for ln in lines if not _is_plan(ln)]
+    src = usable or lines
+    # 1. structured Spark error-class line (the root cause), e.g.
+    #    "[UNRESOLVED_COLUMN.WITH_SUGGESTION] …" / "[FIELD_NOT_NULLABLE_WITH_NAME] …"
+    coded = [ln for ln in src if re.search(r"\[[A-Z][A-Z0-9_.]{2,}\]", ln)]
+    if coded:
+        return _clean(coded[-1])
+    # 2. deepest real exception, skipping generic Spark wrappers
+    exc = [
+        ln
+        for ln in src
+        if re.search(r"(Error|Exception):", ln) and "Traceback" not in ln
+    ]
+    nonwrap = [
+        ln
+        for ln in exc
+        if not re.search(r"Job aborted|stage failure|SparkException", ln)
+    ]
+    if nonwrap:
+        return _clean(nonwrap[-1])
+    if exc:
+        return _clean(exc[-1])
+    return _clean(src[-1])
+
+
+@app.get("/v1/errors")
+def errors_endpoint(limit: int = 200) -> list[dict[str, Any]]:
+    """Failed runs with their full stacktrace — backs the dedicated errors view.
+
+    Alerts (/v1/alerts) carry only the headline; this serves the detail so
+    stacktraces don't clutter the alerts panel. Latest failure per pipeline.
+    """
+    from poorbricks.run_history import RunHistoryStore
+
+    bounded = max(1, min(limit, 1000))
+    # Latest run per pipeline (newest finished_at wins), then keep the failures —
+    # so a pipeline that has since succeeded drops off, and old failures outside
+    # a naive recent-N window are still caught.
+    latest: dict[str, Any] = {}
+    for rec in RunHistoryStore().recent(limit=bounded):
+        prev = latest.get(rec.pipeline_key)
+        if prev is None or (rec.finished_at and rec.finished_at > prev.finished_at):
+            latest[rec.pipeline_key] = rec
+    out: list[dict[str, Any]] = []
+    for rec in latest.values():
+        if rec.status != "failed":
+            continue
+        out.append(
+            {
+                "pipeline_key": rec.pipeline_key,
+                "table_name": rec.table_name,
+                "environment": rec.environment,
+                "finished_at": rec.finished_at.isoformat() if rec.finished_at else None,
+                "headline": _error_headline(rec.error),
+                "error": rec.error or "",
+            }
+        )
+    out.sort(key=lambda r: r["finished_at"] or "", reverse=True)
+    return out
+
+
+@app.get("/v1/source/{table_name}")
+def source_endpoint(table_name: str) -> dict[str, Any]:
+    """Original repo source for a table (transform/pipeline/config/fixtures) —
+    the code as written, not a transformed version — for debugging.
+
+    Read from the published code tree (what the upload persisted), located via
+    the contract's ``module`` + ``prefix``; no pipeline re-run needed.
+    """
+    from utils.contracts import fetch_contract_from_mongo
+
+    try:
+        contract = fetch_contract_from_mongo(table_name)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail=f"no contract for {table_name!r}")
+    module = (contract or {}).get("module") or ""
+    prefix = (contract or {}).get("prefix") or ""
+    files: dict[str, str] = {}
+    if module:
+        # tables.silver.dim_patient.pipeline -> tables/silver/dim_patient
+        rel = module.rsplit(".", 1)[0].replace(".", "/")
+        base = Path(settings.dags_dir) / settings.code_pvc_root / prefix / rel
+        for fname in ("transform.py", "pipeline.py", "config.py", "fixtures.py"):
+            try:
+                fp = base / fname
+                if fp.is_file():
+                    files[fname] = fp.read_text()
+            except Exception:  # noqa: BLE001
+                continue
+    return {
+        "table_name": table_name,
+        "module": module,
+        "prefix": prefix,
+        "files": files,
+    }
+
+
+@app.post("/v1/contracts/{table_name}/descriptions")
+def set_descriptions_endpoint(
+    table_name: str, descriptions: dict[str, str]
+) -> dict[str, Any]:
+    """Attach human/LLM-readable field descriptions to a contract.
+
+    Body: ``{"<field>": "<description>", ...}``. Fills missing
+    ``fields[].description`` and a top-level ``field_descriptions`` map so cosmo
+    /LLMs can understand the columns. Additive — never overwrites existing.
+    """
+    from utils.contracts import fetch_contract_from_mongo, set_field_descriptions
+
+    applied = set_field_descriptions(table_name, descriptions)
+    if applied == 0:
+        try:
+            fetch_contract_from_mongo(table_name)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(
+                status_code=404, detail=f"no contract for {table_name!r}"
+            )
+    return {"ok": True, "table_name": table_name, "applied": applied}
+
+
+@app.get("/v1/staleness")
+def staleness_endpoint() -> list[dict[str, Any]]:
+    """Per-pipeline freshness verdicts (ok / overdue / missing) for the dashboard.
+
+    Derives each scheduled pipeline's expected cadence from its stored DAG and
+    compares it to the last recorded run — the same logic the staleness monitor
+    alerts on.
+    """
+    from datetime import UTC, datetime
+
+    from poorbricks.run_history import RunHistoryStore
+    from poorbricks.staleness import cadences_from_dags, evaluate
+
+    now = datetime.now(UTC)
+    dag_store = _build_store(settings)
+    cadences = cadences_from_dags(dag_store, now)
+    last_finished = {
+        key: rec.finished_at
+        for key, rec in RunHistoryStore()
+        .last_run_per_pipeline(environment="prod")
+        .items()
+        if rec.finished_at
+    }
+    return [v.to_dict() for v in evaluate(cadences, last_finished, now)]
+
+
+@app.get("/v1/lineage")
+def lineage_endpoint() -> dict[str, list[dict[str, Any]]]:
+    """Table-to-table lineage graph (nodes + edges) for the navigator."""
+    from utils.contracts import list_contract_details
+    from utils.lineage import build_lineage_graph
+
+    nodes, edges = build_lineage_graph(list_contract_details())
+    return {
+        "nodes": [{"id": n.id, "label": n.label, "kind": n.kind} for n in nodes],
+        "edges": [{"source": e.source, "target": e.target} for e in edges],
+    }
+
+
+@app.get("/v1/alerts")
+def alerts_endpoint(environment: str = "prod") -> dict[str, list[dict[str, Any]]]:
+    """Runtime alerts grouped by severity — failures, anomalies, regressions, staleness."""
+    from datetime import UTC, datetime
+
+    from poorbricks.run_history import RunHistoryStore
+    from poorbricks.staleness import cadences_from_dags, evaluate
+
+    grouped: dict[str, list[dict[str, Any]]] = {"error": [], "warn": [], "info": []}
+    store = RunHistoryStore()
+
+    # Newest run per pipeline in this environment.
+    latest: dict[str, Any] = {}
+    for rec in store.recent(300):
+        if rec.environment != environment:
+            continue
+        prev = latest.get(rec.pipeline_key)
+        if prev is None or (rec.finished_at and rec.finished_at > prev.finished_at):
+            latest[rec.pipeline_key] = rec
+    for key, rec in latest.items():
+        if rec.status == "failed":
+            grouped["error"].append(
+                {
+                    "kind": "failure",
+                    "pipeline_key": key,
+                    # Headline only — the full stacktrace lives in /v1/errors so
+                    # alerts stay readable and link out to the error detail.
+                    "summary": _error_headline(rec.error),
+                }
+            )
+        if rec.anomaly and rec.anomaly.get("is_anomaly"):
+            grouped["warn"].append(
+                {
+                    "kind": "row_count_anomaly",
+                    "pipeline_key": key,
+                    "summary": rec.anomaly.get("reason") or "row-count anomaly",
+                }
+            )
+        drift = rec.drift_summary or {}
+        if drift.get("regression_count") or drift.get("regressed_columns"):
+            grouped["warn"].append(
+                {
+                    "kind": "regression",
+                    "pipeline_key": key,
+                    "summary": "regression vs. prior run",
+                }
+            )
+
+    now = datetime.now(UTC)
+    cadences = cadences_from_dags(_build_store(settings), now)
+    last = {
+        k: r.finished_at
+        for k, r in store.last_run_per_pipeline(environment).items()
+        if r.finished_at
+    }
+    for v in evaluate(cadences, last, now):
+        if v.state == "missing":
+            grouped["error"].append(
+                {
+                    "kind": "staleness",
+                    "pipeline_key": v.pipeline_key,
+                    "summary": "no run on record",
+                }
+            )
+        elif v.state == "overdue":
+            grouped["warn"].append(
+                {
+                    "kind": "staleness",
+                    "pipeline_key": v.pipeline_key,
+                    "summary": f"overdue: {round((v.age_s or 0) / 3600, 1)}h since last run",
+                }
+            )
+    return grouped
+
+
+@app.get("/v1/verification")
+def verification_endpoint() -> dict[str, list[dict[str, Any]]]:
+    """Static contract findings — stub columns, literals, cross-table breaks."""
+    from pyspark.sql.types import StructType
+
+    from utils.contracts import list_contract_analysis
+
+    grouped: dict[str, list[dict[str, Any]]] = {"error": [], "warn": [], "info": []}
+    # Single batched read of the (already write-time-computed) analysis fields,
+    # not one fetch_contract_from_mongo per contract — keeps this fast at scale.
+    contracts: dict[str, dict[str, Any]] = {
+        c["table_name"]: c for c in list_contract_analysis() if c.get("table_name")
+    }
+
+    def _trunc(cols: list[str], n: int = 8) -> str:
+        return ", ".join(cols[:n]) + ("…" if len(cols) > n else "")
+
+    for name, c in contracts.items():
+        cols = (c.get("lineage") or {}).get("columns") or {}
+        null_rates = (c.get("profile") or {}).get("null_rates") or {}
+        fields = c.get("fields") or []
+        if cols:
+            stub = sorted(k for k, v in cols.items() if not v.get("sources"))
+        else:
+            stub = sorted(k for k, r in null_rates.items() if r == 1.0)
+        literals = sorted(f["name"] for f in fields if f.get("is_literal"))
+        if stub:
+            grouped["warn"].append(
+                {
+                    "kind": "stub",
+                    "pipeline_key": name,
+                    "summary": f"{len(stub)} column(s) with no upstream source: {_trunc(stub)}",
+                }
+            )
+        if literals:
+            grouped["info"].append(
+                {
+                    "kind": "literal",
+                    "pipeline_key": name,
+                    "summary": f"{len(literals)} literal column(s): {_trunc(literals)}",
+                }
+            )
+        imputed = {col: n for col, n in (c.get("imputations") or {}).items() if n}
+        if imputed:
+            detail = ", ".join(f"{col} ({n})" for col, n in sorted(imputed.items()))
+            grouped["warn"].append(
+                {
+                    "kind": "imputed",
+                    "pipeline_key": name,
+                    "summary": (
+                        f"bad source data defaulted in {len(imputed)} column(s): "
+                        f"{detail} — non-nullable column had null/missing source values"
+                    ),
+                }
+            )
+
+    for name, c in contracts.items():
+        consumed = (c.get("lineage") or {}).get("consumed") or {}
+        for upstream, used in consumed.items():
+            up = contracts.get(upstream)
+            if up is None:
+                continue
+            have = {f.name for f in StructType.fromJson(up["schema_json"]).fields}
+            missing = sorted(set(used) - have)
+            if missing:
+                grouped["error"].append(
+                    {
+                        "kind": "contract_break",
+                        "pipeline_key": name,
+                        "summary": f"consumes {upstream}.{{{', '.join(missing)}}} (gone upstream)",
+                    }
+                )
+    return grouped
+
+
+@app.post("/v1/dags/{dag_id}/run")
+def trigger_dag_endpoint(dag_id: str) -> dict[str, Any]:
+    """Trigger a manual Airflow DAG run (web-debug: run a dev DAG and watch it)."""
+    from poorbricks.airflow.watch import trigger_dag_run
+
+    if not _DAG_ID_RE.fullmatch(dag_id):
+        raise HTTPException(
+            status_code=400, detail=f"dag_id must match [A-Za-z0-9_-]+, got {dag_id!r}"
+        )
+    try:
+        run_id = trigger_dag_run(settings.airflow_url, dag_id)
+    except Exception as exc:  # noqa: BLE001 — surface the Airflow error to the caller
+        raise HTTPException(
+            status_code=502, detail=f"failed to trigger {dag_id!r}: {exc}"
+        )
+    return {"dag_id": dag_id, "run_id": run_id, "airflow_url": settings.airflow_url}
+
+
+@app.get("/v1/table/{schema}/{name}")
+def table_preview_endpoint(schema: str, name: str, limit: int = 50) -> dict[str, Any]:
+    """Preview rows from a warehouse table (web-debug: navigate dev results).
+
+    ``schema`` may be a dev schema like ``silver__dev``. Identifiers are strictly
+    validated since they are interpolated into the query.
+    """
+    from dataclasses import asdict
+
+    from utils.postgres import PostgresInspector
+
+    if not _IDENT_RE.fullmatch(schema) or not _IDENT_RE.fullmatch(name):
+        raise HTTPException(
+            status_code=400, detail="schema/name must match [A-Za-z0-9_]+"
+        )
+    bounded = max(1, min(limit, 500))
+    try:
+        snapshot = PostgresInspector().sample_table(schema, name, bounded)
+    except Exception as exc:  # noqa: BLE001 — table missing / unreadable → 404
+        raise HTTPException(
+            status_code=404, detail=f"could not read {schema}.{name}: {exc}"
+        )
+    return asdict(snapshot)
+
+
+def _prod_upload_authorized(
+    environment: str, expected: str, presented: str | None
+) -> bool:
+    """Authorize a prod upload against the CI-only deploy token.
+
+    Dev uploads are always allowed (developer self-service). Prod uploads are
+    allowed when the gate is disabled (``expected`` empty — fail-open until the
+    token is provisioned) OR when the presented token matches in constant time.
+    """
+    if environment != "prod":
+        return True
+    if not expected:  # gate disabled (token not provisioned) — fail open
+        return True
+    if not presented:
+        return False
+    return hmac.compare_digest(presented, expected)
+
+
 @app.post("/v1/upload")
 async def upload(
     prefix: str = Form(...),
     sha: str = Form(...),
     code: UploadFile = File(...),
+    environment: str = Form("prod"),
+    x_poorbricks_deploy_token: str | None = Header(default=None),
 ) -> JSONResponse:
     _validate_prefix(prefix)
     _validate_sha(sha)
+    if environment not in ("prod", "dev"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"environment must be 'prod' or 'dev', got {environment!r}",
+        )
+    # Prod deploys are CI-only when a deploy token is configured; dev is open.
+    if not _prod_upload_authorized(
+        environment, settings.prod_deploy_token, x_poorbricks_deploy_token
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "prod uploads require a valid X-Poorbricks-Deploy-Token "
+                "(CI deploy workflow only); use --env dev for local/dev uploads"
+            ),
+        )
     if not _upload_lock.acquire(blocking=False):
         return JSONResponse(
             {"ok": False, "message": "server busy: another upload is in progress"},
@@ -175,7 +624,9 @@ async def upload(
         )
     try:
         payload = await code.read()
-        result = await run_in_threadpool(_handle_upload, prefix, sha, payload, settings)
+        result = await run_in_threadpool(
+            _handle_upload, prefix, sha, payload, settings, environment
+        )
     except Exception as exc:  # never return an empty-body 500
         import traceback
 
@@ -221,14 +672,18 @@ async def get_code(prefix: str) -> Response:
 
 
 @app.post("/v1/regenerate")
-async def regenerate() -> JSONResponse:
-    """Re-render every stored DAG in place with the current dag_generator.
+async def regenerate(prefix: str | None = None) -> JSONResponse:
+    """Re-render stored DAGs in place with the current dag_generator.
 
     Migrates already-uploaded DAGs onto a new worker pod spec without
     re-uploading any table repo: each stored DAG already carries its full
     task graph, so it is parsed back to a workflow and re-rendered against the
     current worker image. A DAG that fails to parse or render is reported
     under ``failed`` and left untouched, so one bad DAG never aborts the batch.
+
+    Pass ``?prefix=<repo>`` to regenerate only one repo's DAGs — used to canary
+    a new worker image on a subset (e.g. bronze repos) before the whole fleet.
+    Omit it to regenerate every stored prefix.
     """
     if not _upload_lock.acquire(blocking=False):
         return JSONResponse(
@@ -236,7 +691,7 @@ async def regenerate() -> JSONResponse:
             status_code=503,
         )
     try:
-        result = await run_in_threadpool(_regenerate_all, settings)
+        result = await run_in_threadpool(_regenerate_all, settings, prefix)
     finally:
         _upload_lock.release()
     return JSONResponse(result)
@@ -307,17 +762,57 @@ def _build_db_contract(db: str, collection: str, sample_size: int) -> dict[str, 
     }
 
 
+def _dag_target_kwargs(cfg: ApiSettings, environment: str) -> dict[str, Any]:
+    """Resolve the env-specific ``generate_dag_file`` kwargs.
+
+    A dev upload writes to the dev Postgres target under the dev schema suffix
+    and fast-fails (no retries); a prod upload uses the prod target + retries.
+    """
+    common = {
+        "postgres_port": cfg.postgres_port,
+        "contracts_api_url": cfg.contracts_api_url,
+        "retry_delay_minutes": cfg.worker_retry_delay_minutes,
+    }
+    if environment == "dev":
+        return {
+            **common,
+            "environment": "dev",
+            "postgres_host": cfg.dev_postgres_host or cfg.postgres_host,
+            "postgres_db": cfg.dev_postgres_db or cfg.postgres_db,
+            "schema_suffix": cfg.dev_schema_suffix,
+            "retries": 0,
+        }
+    return {
+        **common,
+        "environment": "prod",
+        "postgres_host": cfg.postgres_host,
+        "postgres_db": cfg.postgres_db,
+        "schema_suffix": "",
+        "retries": cfg.worker_retries,
+    }
+
+
 def _handle_upload(
-    prefix: str, sha: str, payload: bytes, cfg: ApiSettings
+    prefix: str,
+    sha: str,
+    payload: bytes,
+    cfg: ApiSettings,
+    environment: str = "prod",
 ) -> dict[str, Any]:
     """Synchronous upload pipeline (runs in a worker thread).
 
     Each phase is recorded into the shared upload status (surfaced live by
     GET /v1/status) and into a ``phases`` trail returned in the response, so a
     slow or failed upload always shows how far it got and where it broke.
+
+    A ``dev`` upload is namespaced to a ``dev-<prefix>`` DAG prefix and writes
+    to a dev Postgres schema, so it runs on the shared Airflow without touching
+    prod DAGs or tables.
     """
     import time
 
+    effective_prefix = f"dev-{prefix}" if environment == "dev" else prefix
+    target_kwargs = _dag_target_kwargs(cfg, environment)
     phases: list[dict[str, Any]] = []
 
     def begin(name: str) -> None:
@@ -421,31 +916,106 @@ def _handle_upload(
             tables_dir=tables_dir,
             dags_dir=Path(cfg.dags_dir),
             code_root=cfg.code_pvc_root,
-            prefix=prefix,
+            prefix=effective_prefix,
         )
         dag_names: list[str] = []
         for wf in workflows:
             content = generate_dag_file(
                 wf,
-                prefix=prefix,
+                prefix=effective_prefix,
                 image=wf.image or cfg.worker_image,
                 namespace=cfg.worker_namespace,
                 runtime_secret=cfg.runtime_secret_name,
+                sha=sha,
+                **target_kwargs,
             )
-            dag_store.put(prefix, wf.name, content)
+            dag_store.put(effective_prefix, wf.name, content)
             dag_names.append(wf.name)
 
-        pruned = dag_store.prune(prefix, keep=set(dag_names))
+        pruned = dag_store.prune(effective_prefix, keep=set(dag_names))
+
+        # Reconcile contracts: a pipeline removed from the repo must not leave
+        # a ghost contract behind. Delete this prefix's orphaned contracts,
+        # but never one still consumed by another repo (kept + warned).
+        begin("reconcile_contracts")
+        contract_cleanup = _reconcile_contracts(
+            effective_prefix, _published_tables(workflows)
+        )
 
         return {
             "ok": True,
             "prefix": prefix,
+            "effective_prefix": effective_prefix,
+            "environment": environment,
             "sha": sha,
             "dag_names": sorted(dag_names),
             "pruned": pruned,
+            "removed_contracts": contract_cleanup["deleted"],
+            "contract_warnings": contract_cleanup["warnings"],
             "workflows": [_serialize(wf) for wf in workflows],
             "phases": trail(),
         }
+
+
+def _published_tables(workflows: Iterable[WorkflowConfig]) -> set[str]:
+    """The set of table names this upload publishes.
+
+    Union of (a) the registry populated by ``verify_local``'s discovery over the
+    extracted tree and (b) the table names referenced by workflow task pipeline
+    keys (``"<storage>:<table>"`` → ``"<table>"``) — belt and suspenders.
+    """
+    tables: set[str] = set()
+    try:
+        from poorbricks.registry import all_pipelines
+
+        tables.update(meta.table_name for meta in all_pipelines().values())
+    except Exception:  # noqa: BLE001 — registry is best-effort here
+        pass
+    for wf in workflows:
+        for task in wf.tasks:
+            key = task.pipeline
+            tables.add(key.split(":", 1)[1] if ":" in key else key)
+    return tables
+
+
+def _external_consumers(details: list[dict[str, Any]], prefix: str) -> set[str]:
+    """Tables consumed by contracts owned by a DIFFERENT prefix.
+
+    A contract still consumed elsewhere (via declared ``inputs`` or captured
+    ``lineage.consumed``) must never be deleted out from under that consumer.
+    """
+    consumers: set[str] = set()
+    for doc in details:
+        if doc.get("prefix") == prefix:
+            continue
+        for inp in doc.get("inputs", []) or []:
+            table = inp.get("table_name")
+            if table:
+                consumers.add(table)
+        consumed = (doc.get("lineage") or {}).get("consumed") or {}
+        consumers.update(consumed.keys())
+    return consumers
+
+
+def _reconcile_contracts(prefix: str, keep_published: set[str]) -> dict[str, Any]:
+    """Delete this prefix's orphaned contracts; keep+warn ones used elsewhere."""
+    from utils.contracts import list_contract_details, prune_contracts
+
+    if not keep_published:
+        # Could not determine what this upload publishes — refuse to mass-delete.
+        return {"deleted": [], "warnings": ["skipped: no published tables resolved"]}
+
+    details = list_contract_details()
+    owned = {d["table_name"] for d in details if d.get("prefix") == prefix}
+    consumed_elsewhere = _external_consumers(details, prefix)
+    still_consumed = sorted((owned - keep_published) & consumed_elsewhere)
+    # Adding still-consumed tables to `keep` protects them from prune.
+    deleted = prune_contracts(prefix, keep_published | consumed_elsewhere)
+    warnings = [
+        f"{t}: removed from repo but still consumed by another repo — kept"
+        for t in still_consumed
+    ]
+    return {"deleted": deleted, "warnings": warnings}
 
 
 def _build_store(cfg: ApiSettings) -> DagStore:
@@ -460,12 +1030,23 @@ def _build_code_tarball(code_dir: Path) -> bytes:
     return buf.getvalue()
 
 
-def _regenerate_all(cfg: ApiSettings) -> dict[str, Any]:
-    """Re-render every stored DAG in place; one bad DAG never aborts the batch."""
+def _regenerate_all(cfg: ApiSettings, only_prefix: str | None = None) -> dict[str, Any]:
+    """Re-render stored DAGs in place; one bad DAG never aborts the batch.
+
+    ``only_prefix`` limits the batch to a single repo's DAGs (canary path);
+    None regenerates every stored prefix.
+    """
     dag_store = _build_store(cfg)
     regenerated: list[str] = []
     failed: list[dict[str, str]] = []
-    for prefix in dag_store.list_prefixes():
+    prefixes = dag_store.list_prefixes()
+    if only_prefix is not None:
+        prefixes = [p for p in prefixes if p == only_prefix]
+    for prefix in prefixes:
+        # A dev DAG keeps its dev target + suffix on regenerate; derive it from
+        # the ``dev-`` prefix (the new env constants need not be parsed back).
+        environment = "dev" if prefix.startswith("dev-") else "prod"
+        target_kwargs = _dag_target_kwargs(cfg, environment)
         for name in dag_store.list_dags(prefix):
             dag_ref = f"{prefix}/{name}"
             try:
@@ -488,6 +1069,7 @@ def _regenerate_all(cfg: ApiSettings) -> dict[str, Any]:
                     runtime_secret=parsed.runtime_secret,
                     postgres_creds_secret=parsed.postgres_creds_secret,
                     start_year=parsed.start_year,
+                    **target_kwargs,
                 )
                 dag_store.put(prefix, name, content)
                 regenerated.append(dag_ref)
@@ -572,7 +1154,7 @@ def _serialize(obj: Any) -> Any:
 def _fail(
     message: str,
     *,
-    errors: list[str] | None = None,
+    errors: list[str] | dict[str, Any] | None = None,
     phases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": False, "message": message, "errors": errors or []}

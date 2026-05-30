@@ -9,7 +9,11 @@ metadata:
     component: triggerer
 spec:
   serviceName: airflow-triggerer
-  replicas: 1
+  # HA: 2 triggerers. The triggerer is natively highly-available — deferred
+  # tasks (sensors/triggers) are shared across triggerers via the metadata DB,
+  # so if one dies the other picks up its triggers. It does not mount the DAG
+  # volume, so it was only pinned to the dags node incidentally.
+  replicas: 2
   selector:
     matchLabels:
       component: triggerer
@@ -20,8 +24,17 @@ spec:
     spec:
       serviceAccountName: airflow
       restartPolicy: Always
-      nodeSelector:
-        poorbricks.io/dags: "true"
+      # De-pinned from poorbricks.io/dags (the spot taint keeps it on on-demand
+      # nodes); spread the two triggerers across nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    component: triggerer
+                topologyKey: kubernetes.io/hostname
       containers:
       - name: triggerer
         image: apache/airflow:3.2.0

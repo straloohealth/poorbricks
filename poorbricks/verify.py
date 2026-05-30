@@ -189,6 +189,92 @@ def _check_pipeline_contracts(
     return errors
 
 
+def _check_consumed_columns(
+    key: str,
+    consumed: dict[str, list[str]],
+    fetcher: ContractFetcher,
+    local_tables: dict[str, PipelineMeta],
+) -> list[ContractError]:
+    """Verify every upstream column a pipeline consumes still exists upstream.
+
+    ``consumed`` is the ``lineage.consumed`` map captured from the Spark plan:
+    ``{upstream_table: [columns the pipeline reads]}``. For each upstream we
+    resolve the current schema — from an in-bundle producer's declared model,
+    else from the published contract — and report a ``lineage_break`` for any
+    consumed column the upstream no longer provides. This is what makes
+    "Y changed its contract in a way that breaks X" fail during X's tests/CI.
+    """
+    from pyspark.sql.types import StructType
+
+    errors: list[ContractError] = []
+    for upstream_table, columns in consumed.items():
+        if upstream_table in local_tables:
+            schema_json = local_tables[upstream_table].model.to_struct().jsonValue()  # type: ignore[attr-defined]
+        else:
+            try:
+                schema_json = fetcher(upstream_table)["schema_json"]
+            except KeyError:
+                errors.append(
+                    ContractError(
+                        pipeline_key=key,
+                        input_name="lineage",
+                        upstream=upstream_table,
+                        reason="missing_contract",
+                    )
+                )
+                continue
+        upstream_columns = {f.name for f in StructType.fromJson(schema_json).fields}
+        missing = sorted(set(columns) - upstream_columns)
+        if missing:
+            errors.append(
+                ContractError(
+                    pipeline_key=key,
+                    input_name="lineage",
+                    upstream=upstream_table,
+                    reason="lineage_break",
+                    details=[
+                        f"consumes {upstream_table}.{col!r} which no longer exists "
+                        f"in the upstream contract"
+                        for col in missing
+                    ],
+                )
+            )
+    return errors
+
+
+def verify_contract(
+    tables_root: Path | None = None,
+    contract_fetcher: ContractFetcher | None = None,
+) -> list[ContractError]:
+    """Cross-table contract check using each pipeline's published lineage.
+
+    For every registered pipeline, reads the column-level lineage published in
+    its own contract (``lineage.consumed`` — captured from the Spark plan on the
+    last run) and verifies each consumed upstream column still exists in the
+    upstream's current contract. Fast (no Spark): it catches an upstream
+    contract change that breaks an existing downstream consumer. The
+    code-under-test direction (a downstream newly consuming a missing column) is
+    covered by the pytest plugin, which captures fresh lineage.
+    """
+    discover_all_pipelines(tables_root)
+    fetcher = contract_fetcher or _default_fetcher()
+    pipelines = all_pipelines()
+    local_tables: dict[str, PipelineMeta] = {
+        meta.table_name: meta for meta in pipelines.values()
+    }
+    errors: list[ContractError] = []
+    for key, meta in pipelines.items():
+        try:
+            contract = fetcher(meta.table_name)
+        except KeyError:
+            # Pipeline has never published — nothing to check yet.
+            continue
+        consumed = (contract.get("lineage") or {}).get("consumed") or {}
+        if consumed:
+            errors.extend(_check_consumed_columns(key, consumed, fetcher, local_tables))
+    return errors
+
+
 @dataclass
 class MongoCheckError:
     """A mongo-mode failure: schema field not present in any sampled document."""
@@ -646,7 +732,9 @@ def main(argv: list[str] | None = None) -> None:
         description="Verify table-repo contracts and expectations",
     )
     parser.add_argument(
-        "--mode", choices=["local", "ci", "arch", "mongo", "db"], required=True
+        "--mode",
+        choices=["local", "ci", "arch", "mongo", "db", "contract"],
+        required=True,
     )
     parser.add_argument(
         "--tables-root",
@@ -692,6 +780,9 @@ def main(argv: list[str] | None = None) -> None:
         errors: list[Any] = verify_local(
             tables_root=args.tables_root, contract_fetcher=fetcher
         )
+    elif args.mode == "contract":
+        fetcher = _http_fetcher(args.contract_url) if args.contract_url else None
+        errors = verify_contract(tables_root=args.tables_root, contract_fetcher=fetcher)
     elif args.mode == "arch":
         errors = check_architecture(tables_root=args.tables_root)
     elif args.mode == "mongo":
@@ -728,6 +819,7 @@ __all__ = [
     "VerificationError",
     "main",
     "verify_ci",
+    "verify_contract",
     "verify_db",
     "verify_local",
     "verify_mongo",

@@ -38,6 +38,8 @@ def upload(
     timeout: float = 600.0,
     poll_interval: float = 30.0,
     max_wait: float = 7200.0,
+    environment: str = "prod",
+    deploy_token: str | None = None,
 ) -> UploadResult:
     """POST a tarball of ``tables/`` + ``workflows/`` to ``server_url``.
 
@@ -53,15 +55,18 @@ def upload(
 
     tarball = _build_tarball(tables_dir=tables_dir, workflows_dir=workflows_dir)
     url = server_url.rstrip("/") + "/v1/upload"
+    # Prod uploads are gated by a CI-only deploy token; dev needs none.
+    headers = {"X-Poorbricks-Deploy-Token": deploy_token} if deploy_token else {}
     waited = 0.0
     while True:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(
                 url,
-                data={"prefix": prefix, "sha": sha},
+                data={"prefix": prefix, "sha": sha, "environment": environment},
                 files={
                     "code": ("code.tar.gz", io.BytesIO(tarball), "application/gzip")
                 },
+                headers=headers,
             )
         if response.status_code in (502, 503) and waited < max_wait:
             print(
@@ -183,6 +188,24 @@ def main(argv: list[str] | None = None) -> int:
             "Pass an empty string to disable the fallback."
         ),
     )
+    parser.add_argument(
+        "--env",
+        choices=["prod", "dev"],
+        default="prod",
+        help=(
+            "Target environment. 'dev' namespaces the DAG as 'dev-<prefix>' and "
+            "writes to a dev Postgres schema, leaving prod DAGs/tables untouched."
+        ),
+    )
+    parser.add_argument(
+        "--deploy-token",
+        default=None,
+        help=(
+            "CI-only deploy token sent as the X-Poorbricks-Deploy-Token header. "
+            "Required for --env prod when the server has the gate enabled; the CI "
+            "deploy workflow injects it from Vault. Not needed for --env dev."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -195,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.timeout,
             poll_interval=args.poll_interval,
             max_wait=args.max_wait,
+            environment=args.env,
+            deploy_token=args.deploy_token,
         )
     except (FileNotFoundError, httpx.HTTPError) as exc:
         print(f"✗ upload failed: {exc}", file=sys.stderr)
@@ -246,9 +271,14 @@ def _watch_after_upload(args: argparse.Namespace, result: UploadResult) -> int:
         f"\n[watch] triggering {len(workflows)} DAG run(s) at {airflow_url} "
         f"(poll every {poll_interval:.0f}s, timeout {watch_timeout:.0f}s)"
     )
+    # Mirror the server's effective-prefix rule so --watch triggers the DAG the
+    # upload actually created (dev uploads become 'dev-<prefix>').
+    repo_prefix = (
+        f"dev-{args.prefix}" if getattr(args, "env", "prod") == "dev" else args.prefix
+    )
     triggered: list[tuple[str, str]] = []  # (dag_id, run_id)
     for wf in workflows:
-        dag_id = f"{args.prefix}__{wf['name']}"
+        dag_id = f"{repo_prefix}__{wf['name']}"
         try:
             run_id = trigger_dag_run(airflow_url, dag_id)
         except Exception as exc:  # noqa: BLE001 - surface every trigger error

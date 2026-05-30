@@ -24,8 +24,19 @@ DEFAULT_POSTGRES_DB = "poorbricks"
 # table code from ``{DEFAULT_CODE_API_URL}/v1/code/{prefix}``.
 DEFAULT_CODE_API_URL = "http://poorbricks-server.airflow.svc.cluster.local:8080"
 
+# Worker pods have no Tailscale, so ContractSource must resolve contracts over
+# the in-cluster Service rather than the default *.ts.net endpoint. Same host
+# as the code api-server (one poorbricks server), surfaced separately so the
+# DAG generator can parameterize it per environment.
+DEFAULT_CONTRACTS_API_URL = "http://poorbricks-server.airflow.svc.cluster.local:8080"
+
+# Dev/test environment defaults (see env-namespaced dev uploads).
+DEV_PREFIX_TEMPLATE = "dev-{repo}"
+DEV_SCHEMA_SUFFIX = "__dev"
+
 __all__ = [
     "DEFAULT_CODE_API_URL",
+    "DEFAULT_CONTRACTS_API_URL",
     "DEFAULT_NAMESPACE",
     "DEFAULT_POSTGRES_CREDS_SECRET_NAME",
     "DEFAULT_POSTGRES_DB",
@@ -35,4 +46,6 @@ __all__ = [
     "DEFAULT_WORKER_IMAGE",
     "DEFAULT_WORKER_IMAGE_REPO",
     "DEFAULT_WORKER_IMAGE_TAG",
+    "DEV_PREFIX_TEMPLATE",
+    "DEV_SCHEMA_SUFFIX",
 ]

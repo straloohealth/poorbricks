@@ -64,6 +64,15 @@ class Expectations:
     listing the column in ``NON_NULL_COLUMNS``; use this when you tolerate
     a small fraction of nulls."""
 
+    IMPUTE_DEFAULTS: dict[str, Any] = {}
+    """``{column: default}``. A column the contract declares non-nullable but
+    whose *source* may carry nulls/missing values (messy upstream). Instead of
+    aborting the run, the framework coalesces nulls to ``default`` before the
+    write — keeping the contract non-nullable and the rows — and records the
+    imputed-row count on the contract so ``/v1/verification`` raises a
+    NON-CRITICAL warning ("bad source data was defaulted"). Pair with
+    ``MongoSource(nullable_columns=[...])`` so the read survives the nulls."""
+
     ENUM_VALUES: dict[str, list[Any]] = {}
     """``{column: allowed_values}``. Every row's value for ``column`` must
     be in ``allowed_values``. Useful for status/category columns."""
@@ -75,6 +84,45 @@ class Expectations:
     FRESH_MAX_AGE_DAYS: int | None = None
     """Companion to ``FRESH_COLUMN``. Both must be set or both must be
     ``None``."""
+
+    # --- Row-count anomaly detection (compared to recent run history) -------
+    ROW_COUNT_ANOMALY_METHOD: str | None = None
+    """``"zscore"`` | ``"pct"`` | ``"auto"`` | ``"off"``. ``None`` uses the
+    framework default (``auto``). Compares this run's row count to recent
+    successful runs and alerts on a sudden spike/drop."""
+
+    ROW_COUNT_ANOMALY_Z: float | None = None
+    """z-score threshold (default 3.0): flag when the count is more than this
+    many standard deviations from the recent mean."""
+
+    ROW_COUNT_ANOMALY_PCT: float | None = None
+    """Percentage-band threshold (default 0.25 = 25%): flag when the count
+    deviates from the recent mean by more than this fraction. Used as the
+    fallback when the history has no variance (z-score undefined)."""
+
+    ROW_COUNT_ANOMALY_MIN_SAMPLES: int | None = None
+    """Minimum recent successful runs required before anomaly detection
+    activates (default 5)."""
+
+    # --- Regression-vs-prior (this run's data vs the previous run's) --------
+    REGRESSION_ENABLED: bool = True
+    """When True (and a prior snapshot exists), diff this run's output against
+    the previous successful run and alert on column regressions."""
+
+    REGRESSION_JOIN_KEYS: list[str] | None = None
+    """Join keys for the regression diff. Defaults to ``UNIQUE_KEYS[0]`` when
+    unset."""
+
+    REGRESSION_TOLERANCE_PCT: float | None = None
+    """Per-column mismatch tolerance for the regression diff (default 10%)."""
+
+    REGRESSION_IGNORE_COLUMNS: list[str] = []
+    """Columns excluded from the regression diff entirely."""
+
+    REGRESSION_MAX_ROWS: int | None = None
+    """Skip regression-vs-prior (snapshot + diff) above this row count — the
+    diff loads both tables into the driver, so a cap prevents OOM on large
+    tables. ``None`` → framework default (1,000,000)."""
 
     # Migration-period slack factors. These widen the effective thresholds
     # during Phase 2 so that normal production drift (row-count changes,
