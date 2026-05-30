@@ -77,31 +77,44 @@ spec:
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /tmp/airflow-logs
+        # /api/v2/monitor/health queries the metadata DB. The old probes (1s
+        # default timeout, 3 failures, 10s/5s periods) + a hard CPU limit=request
+        # evicted the pod whenever a health query was slow under DB load — the
+        # cause of the 35 webserver restarts. Loosen the timeouts/thresholds so a
+        # transient DB slowdown sheds the pod from the Service (readiness) instead
+        # of killing it, and only a sustained ~3min outage trips liveness.
         startupProbe:
           httpGet:
             path: /api/v2/monitor/health
             port: 8080
           failureThreshold: 30
           periodSeconds: 5
+          timeoutSeconds: 10
         livenessProbe:
           httpGet:
             path: /api/v2/monitor/health
             port: 8080
-          initialDelaySeconds: 0
-          periodSeconds: 10
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 6
         readinessProbe:
           httpGet:
             path: /api/v2/monitor/health
             port: 8080
           initialDelaySeconds: 0
-          periodSeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # limit > request so a health-query spike can burst CPU instead of
+        # CFS-throttling exactly when the pod must answer the probe.
         resources:
           requests:
             cpu: 300m
             memory: 768Mi
           limits:
-            cpu: 300m
-            memory: 768Mi
+            cpu: 1000m
+            memory: 1Gi
       volumes:
       - name: dags
         persistentVolumeClaim:

@@ -16,7 +16,16 @@ DEFAULT_NAMESPACE = "airflow"
 DEFAULT_RUNTIME_SECRET_NAME = "poorbricks-runtime"
 DEFAULT_POSTGRES_CREDS_SECRET_NAME = "poorbricks-server-postgresql-creds"
 
-DEFAULT_POSTGRES_HOST = "postgresql-rw.storage.svc.cluster.local"
+# Analytics writers go through the PgBouncer transaction-mode pooler
+# (infra-storage postgresql-pooler.yaml), NOT the cluster's -rw endpoint
+# directly: a DAG wave of 17-19 worker pods each open short-lived COPY
+# connections per Spark partition, which can exhaust the shared Postgres and
+# starve the Airflow metadata DB. The write path is per-statement autocommit
+# over persistent staging tables (no cross-statement session state), so it is
+# transaction-pooling-safe. Airflow's own metadata DB stays DIRECT on
+# postgresql-rw (transaction pooling breaks Airflow) — that connection comes
+# from the airflow-postgresql Secret, not this constant.
+DEFAULT_POSTGRES_HOST = "postgresql-pooler-rw.storage.svc.cluster.local"
 DEFAULT_POSTGRES_PORT = "5432"
 DEFAULT_POSTGRES_DB = "poorbricks"
 

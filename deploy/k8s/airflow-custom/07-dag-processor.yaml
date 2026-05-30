@@ -76,12 +76,26 @@ spec:
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /tmp/airflow-logs
+        # No probe before. Check the DagProcessorJob heartbeat, falling back to a
+        # bare process check on Airflow versions where that job-type isn't
+        # reported, so a crashed/wedged parser is detected without false restarts.
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - airflow jobs check --job-type DagProcessorJob --hostname $(hostname) || pgrep -f 'airflow dag-processor'
+          initialDelaySeconds: 120
+          periodSeconds: 60
+          timeoutSeconds: 30
+          failureThreshold: 6
+        # limit > request so parsing bursts (DAG reparse) don't CFS-throttle it.
         resources:
           requests:
             cpu: 300m
             memory: 1Gi
           limits:
-            cpu: 300m
+            cpu: 600m
             memory: 1Gi
       volumes:
       - name: dags
