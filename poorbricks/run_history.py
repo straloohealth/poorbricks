@@ -60,6 +60,11 @@ class RunRecord:
     drift_summary: dict[str, Any] | None = None
     timings: dict[str, float] = field(default_factory=dict)
     anomaly: dict[str, Any] | None = None
+    # Per-run profile snapshot (row_count, null_rates, fields, expectations,
+    # schema_hash, anomaly) captured so a dev run can be diffed against the
+    # current prod contract baseline (see poorbricks/prod_diff.py). NULL for
+    # runs recorded before this column existed.
+    profile_snapshot: dict[str, Any] | None = None
     id: int | None = None
 
 
@@ -131,6 +136,12 @@ class RunHistoryStore:
                     )
                     """
                 )
+                # Additive migration for existing deployments — the column was
+                # introduced after the table. Idempotent (PG 9.6+).
+                cur.execute(
+                    f'ALTER TABLE "{META_SCHEMA}".{_RUN_HISTORY_TABLE} '
+                    "ADD COLUMN IF NOT EXISTS profile_snapshot JSONB"
+                )
                 cur.execute(
                     f"""
                     CREATE INDEX IF NOT EXISTS run_history_pipeline_started_idx
@@ -159,9 +170,9 @@ class RunHistoryStore:
                     INSERT INTO "{META_SCHEMA}".{_RUN_HISTORY_TABLE} (
                         pipeline_key, table_name, environment, sha, mode, status,
                         started_at, finished_at, duration_s, row_count, schema_hash,
-                        error, drift_summary, timings, anomaly
+                        error, drift_summary, timings, anomaly, profile_snapshot
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     ) RETURNING id
                     """,
                     (
@@ -183,6 +194,9 @@ class RunHistoryStore:
                         psycopg2.extras.Json(rec.timings) if rec.timings else None,
                         psycopg2.extras.Json(rec.anomaly)
                         if rec.anomaly is not None
+                        else None,
+                        psycopg2.extras.Json(rec.profile_snapshot)
+                        if rec.profile_snapshot is not None
                         else None,
                     ),
                 )
@@ -215,6 +229,7 @@ class RunHistoryStore:
                     drift_summary=r[13],
                     timings=r[14] or {},
                     anomaly=r[15],
+                    profile_snapshot=r[16],
                 )
             )
         return records
@@ -222,8 +237,27 @@ class RunHistoryStore:
     _SELECT_COLUMNS = (
         "id, pipeline_key, table_name, environment, sha, mode, status, "
         "started_at, finished_at, duration_s, row_count, schema_hash, error, "
-        "drift_summary, timings, anomaly"
+        "drift_summary, timings, anomaly, profile_snapshot"
     )
+
+    def get(self, run_id: int) -> RunRecord | None:
+        """Load a single run by id (feeds ``GET /v1/runs/{id}/prod-diff``)."""
+        self.ensure_schema()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT {self._SELECT_COLUMNS}
+                    FROM "{META_SCHEMA}".{_RUN_HISTORY_TABLE}
+                    WHERE id = %s
+                    """,
+                    (run_id,),
+                )
+                rows = self._rows_to_records(cur.fetchall())
+                return rows[0] if rows else None
+        finally:
+            conn.close()
 
     def recent_successful(
         self, pipeline_key: str, limit: int = 20, environment: str | None = None

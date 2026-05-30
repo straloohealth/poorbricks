@@ -3,13 +3,17 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, tableOf, type ErrorRow } from "@/lib/api";
 import { ErrorDetail } from "@/components/ErrorDetail";
+import { fmtDateTime } from "@/lib/datetime";
 import { errorHeadline } from "@/lib/errorFormat";
+import { usePagination } from "@/lib/usePagination";
+import { PaginationControls } from "@/components/PaginationControls";
 
 export default function ErrorsPage() {
   const [rows, setRows] = useState<ErrorRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pg = usePagination(rows, 20);
 
   useEffect(() => {
     api
@@ -48,7 +52,7 @@ export default function ErrorsPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {pg.pageItems.map((r) => {
                 const isOpen = open === r.pipeline_key;
                 return (
                   <Fragment key={r.pipeline_key}>
@@ -60,7 +64,7 @@ export default function ErrorsPage() {
                       <td>{tableOf(r.pipeline_key)}</td>
                       <td className="muted">{r.environment}</td>
                       <td>{errorHeadline(r.error) || r.headline}</td>
-                      <td className="muted">{r.finished_at ?? ""}</td>
+                      <td className="muted">{fmtDateTime(r.finished_at)}</td>
                       <td className="muted">{isOpen ? "▾" : "▸"}</td>
                     </tr>
                     {isOpen && (
@@ -76,6 +80,7 @@ export default function ErrorsPage() {
             </tbody>
           </table>
         )}
+        {loaded && rows.length > 0 && <PaginationControls p={pg} cyPrefix="errors" />}
       </section>
     </div>
   );

@@ -78,3 +78,26 @@ def test_last_run_per_pipeline_scopes_to_environment(store: RunHistoryStore) -> 
     assert _KEY in prod_last
     assert prod_last[_KEY].environment == "prod"
     assert prod_last[_KEY].row_count == 1000
+
+
+def test_profile_snapshot_round_trips_through_record_and_get(
+    store: RunHistoryStore,
+) -> None:
+    rec = _rec("dev", "ok", 42, ago_min=2)
+    rec.profile_snapshot = {
+        "row_count": 42,
+        "null_rates": {"a": 0.1},
+        "fields": [{"name": "a", "type": "string"}],
+    }
+    new_id = store.record(rec)
+
+    got = store.get(new_id)
+    assert got is not None
+    assert got.profile_snapshot == rec.profile_snapshot
+    assert got.row_count == 42
+
+    # A run without a snapshot stores NULL, and an unknown id returns None.
+    id2 = store.record(_rec("prod", "ok", 1, ago_min=1))
+    got2 = store.get(id2)
+    assert got2 is not None and got2.profile_snapshot is None
+    assert store.get(-1) is None

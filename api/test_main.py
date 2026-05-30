@@ -396,6 +396,27 @@ def test_regenerate_migrates_legacy_dag(
     assert "legacy-image:v1" not in rendered
 
 
+def test_regenerate_dev_dag_is_manual_only(
+    code_client: tuple[TestClient, Path],
+) -> None:
+    """A ``dev-`` prefixed DAG is re-rendered manual-trigger-only: the cron is
+    stripped (SCHEDULE = None) even when the stored DAG carried one, so dev
+    jobs never auto-run and are never evaluated for staleness."""
+    client, dags = code_client
+    (dags / "dev-myrepo").mkdir()
+    dag_path = dags / "dev-myrepo" / "nightly.py"
+    dag_path.write_text(_LEGACY_DAG)  # carries SCHEDULE = '0 3 * * *'
+
+    body = client.post("/v1/regenerate").json()
+
+    assert body["ok"] is True
+    assert body["regenerated"] == ["dev-myrepo/nightly"]
+    rendered = dag_path.read_text()
+    ast.parse(rendered)
+    assert "SCHEDULE = None" in rendered
+    assert "'0 3 * * *'" not in rendered
+
+
 def test_regenerate_reports_unparseable_dag(
     code_client: tuple[TestClient, Path],
 ) -> None:
@@ -427,3 +448,44 @@ def test_regenerate_busy_returns_503(
     finally:
         api_main._upload_lock.release()
     assert response.status_code == 503
+
+
+@pytest.mark.integration
+def test_source_comment_crud(client: TestClient) -> None:
+    """POST/GET/DELETE line comments on a table's source (needs local Mongo)."""
+    table = "_cc_api_test_table"
+    base = f"/v1/source/{table}/comments"
+
+    # Validation: unknown file, inverted range, and empty body are all 400.
+    assert client.post(base, json={"file": "x.py", "line_start": 1, "line_end": 1, "body": "hi"}).status_code == 400
+    assert client.post(base, json={"file": "transform.py", "line_start": 5, "line_end": 2, "body": "hi"}).status_code == 400
+    assert client.post(base, json={"file": "transform.py", "line_start": 1, "line_end": 1, "body": "  "}).status_code == 400
+
+    try:
+        created = client.post(
+            base,
+            json={
+                "file": "transform.py",
+                "line_start": 3,
+                "line_end": 4,
+                "body": "  needs an index  ",
+                "release_sha": "deadbeef",
+            },
+        ).json()
+        assert created["id"]
+        assert created["body"] == "needs an index"  # trimmed
+        assert created["release_sha"] == "deadbeef"
+        assert created["line_end"] == 4
+
+        listed = client.get(base).json()
+        assert any(c["id"] == created["id"] for c in listed)
+        assert client.get(base + "?file=config.py").json() == []
+
+        d = client.delete(f"{base}/{created['id']}")
+        assert d.status_code == 200 and d.json()["deleted"] == created["id"]
+        # Second delete is a 404 (manual removal is idempotent from the UI's view).
+        assert client.delete(f"{base}/{created['id']}").status_code == 404
+    finally:
+        from poorbricks.code_comments import _coll
+
+        _coll().delete_many({"table_name": table})

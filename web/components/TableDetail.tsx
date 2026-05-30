@@ -1,14 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   api,
   tableOf,
   type Contract,
+  type ProdDiff,
   type RunRecord,
   type SourceFiles,
   type TableSnapshot,
 } from "@/lib/api";
+import { fmtDateTime } from "@/lib/datetime";
+import { usePagination } from "@/lib/usePagination";
+import { PaginationControls } from "@/components/PaginationControls";
+import { TruncatedCell } from "@/components/TruncatedCell";
+import { CodeViewer } from "@/components/CodeViewer";
+import { ProdDiffBadge } from "@/components/ProdDiffBadge";
+import { ProdDiffDetail } from "@/components/ProdDiffDetail";
+
+type DiffState = ProdDiff | "loading" | "error";
 
 export function TableDetail({
   table,
@@ -25,6 +35,11 @@ export function TableDetail({
   const [openFile, setOpenFile] = useState<string | null>(null);
   // "na" = table has no Postgres materialisation (e.g. a Mongo upstream node).
   const [preview, setPreview] = useState<"loading" | "ok" | "na" | "missing">("loading");
+  // Dev-run-vs-prod diff: which run row is expanded + a per-run-id cache.
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [diffs, setDiffs] = useState<Record<number, DiffState>>({});
+
+  const isDev = environment === "dev";
 
   // Fetch the contract + run history for the selected table. The `ignore` flag
   // discards results from a superseded selection so a slow response for table A
@@ -40,6 +55,8 @@ export function TableDetail({
     setSource(null);
     setOpenFile(null);
     setPreview("loading");
+    setExpanded(null);
+    setDiffs({});
     api
       .contract(table)
       .then((c) => !ignore && (setContract(c), setContractLoaded(true)))
@@ -81,6 +98,36 @@ export function TableDetail({
     };
   }, [table, contractLoaded, contract?.level, environment]);
 
+  // Derived arrays memoised so pagination keeps a stable identity across renders.
+  const cols = contract?.lineage?.columns ?? {};
+  const consumed = contract?.lineage?.consumed ?? {};
+  const fieldsArr = useMemo(() => contract?.fields ?? [], [contract]);
+  const lineageEntries = useMemo(() => Object.entries(cols), [contract]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sampleRows = useMemo(() => snap?.sample_rows ?? [], [snap]);
+
+  // Pagination hooks — declared before the early return (rules of hooks).
+  const fieldsPg = usePagination(fieldsArr, 25);
+  const lineagePg = usePagination(lineageEntries, 25);
+  const runsPg = usePagination(runs, 10);
+  const samplePg = usePagination(sampleRows, 8);
+
+  const toggleExpand = (run: RunRecord): void => {
+    if (run.id == null) return;
+    const id = run.id;
+    if (expanded === id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(id);
+    if (diffs[id] === undefined) {
+      setDiffs((d) => ({ ...d, [id]: "loading" }));
+      api
+        .prodDiff(id)
+        .then((diff) => setDiffs((d) => ({ ...d, [id]: diff })))
+        .catch(() => setDiffs((d) => ({ ...d, [id]: "error" })));
+    }
+  };
+
   if (!table)
     return (
       <section className="panel" data-cy="table-detail">
@@ -88,9 +135,8 @@ export function TableDetail({
       </section>
     );
 
-  const cols = contract?.lineage?.columns ?? {};
-  const consumed = contract?.lineage?.consumed ?? {};
   const lastRun = runs[0];
+  const runCols = isDev ? 7 : 6;
 
   return (
     <section className="panel" data-cy="table-detail">
@@ -100,7 +146,7 @@ export function TableDetail({
           <span className={`badge ${lastRun.status}`}>{lastRun.status}</span>
           <span className="muted">env {lastRun.environment}</span>
           <span className="muted">{lastRun.row_count ?? "?"} rows</span>
-          <span className="muted">{lastRun.finished_at ?? ""}</span>
+          <span className="muted">{fmtDateTime(lastRun.finished_at)}</span>
           {lastRun.sha && <span className="muted">sha {lastRun.sha.slice(0, 7)}</span>}
         </div>
       )}
@@ -123,7 +169,7 @@ export function TableDetail({
               </tr>
             </thead>
             <tbody>
-              {(contract.fields ?? []).map((f) => (
+              {fieldsPg.pageItems.map((f) => (
                 <tr key={f.name}>
                   <td>{f.name}</td>
                   <td className="muted">{f.type}</td>
@@ -134,6 +180,7 @@ export function TableDetail({
               ))}
             </tbody>
           </table>
+          <PaginationControls p={fieldsPg} cyPrefix="fields" />
 
           <h3>Field lineage — how each field is generated</h3>
           <table className="grid" data-cy="lineage-table">
@@ -144,7 +191,7 @@ export function TableDetail({
               </tr>
             </thead>
             <tbody>
-              {Object.entries(cols).map(([col, info]) => (
+              {lineagePg.pageItems.map(([col, info]) => (
                 <tr key={col}>
                   <td>{col}</td>
                   <td className={info.sources.length ? "" : "muted"}>
@@ -158,6 +205,7 @@ export function TableDetail({
               ))}
             </tbody>
           </table>
+          <PaginationControls p={lineagePg} cyPrefix="lineage" />
           {Object.keys(consumed).length > 0 && (
             <p className="muted">
               Consumes:{" "}
@@ -185,9 +233,12 @@ export function TableDetail({
             ))}
           </div>
           {openFile && source.files[openFile] && (
-            <pre className="stacktrace" data-cy="source-code">
-              {source.files[openFile]}
-            </pre>
+            <CodeViewer
+              table={table}
+              file={openFile}
+              code={source.files[openFile]}
+              sha={runs[0]?.sha ?? null}
+            />
           )}
         </div>
       )}
@@ -196,64 +247,118 @@ export function TableDetail({
       {runs.length === 0 ? (
         <div className="empty">no recorded runs</div>
       ) : (
-        <table className="grid" data-cy="runs-table">
-          <thead>
-            <tr>
-              <th>status</th>
-              <th>env</th>
-              <th>rows</th>
-              <th>dur (s)</th>
-              <th>anomaly</th>
-              <th>finished</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.slice(0, 10).map((r, i) => (
-              <tr key={i}>
-                <td>
-                  <span className={`badge ${r.status}`}>{r.status}</span>
-                </td>
-                <td className="muted">{r.environment}</td>
-                <td>{r.row_count ?? ""}</td>
-                <td className="muted">{r.duration_s}</td>
-                <td className="muted">
-                  {r.anomaly && (r.anomaly as { is_anomaly?: boolean }).is_anomaly
-                    ? String((r.anomaly as { reason?: string }).reason ?? "anomaly")
-                    : ""}
-                </td>
-                <td className="muted">{r.finished_at ?? ""}</td>
+        <>
+          <table className="grid" data-cy="runs-table">
+            <thead>
+              <tr>
+                <th>status</th>
+                <th>env</th>
+                <th>rows</th>
+                <th>dur (s)</th>
+                <th>anomaly</th>
+                <th>finished</th>
+                {isDev && <th>vs prod</th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {runsPg.pageItems.map((r, i) => {
+                const anom = r.anomaly as { is_anomaly?: boolean; reason?: string } | null;
+                const canExpand = isDev && r.id != null;
+                const isOpen = r.id != null && expanded === r.id;
+                return (
+                  <Fragment key={r.id ?? i}>
+                    <tr
+                      data-cy="run-history-row"
+                      onClick={canExpand ? () => toggleExpand(r) : undefined}
+                      style={{ cursor: canExpand ? "pointer" : undefined }}
+                    >
+                      <td>
+                        <span className={`badge ${r.status}`}>{r.status}</span>
+                      </td>
+                      <td className="muted">{r.environment}</td>
+                      <td>{r.row_count ?? ""}</td>
+                      <td className="muted">{r.duration_s}</td>
+                      <td className="muted">
+                        {anom?.is_anomaly ? (
+                          <TruncatedCell
+                            value={String(anom.reason ?? "anomaly")}
+                            max={28}
+                            modalTitle="anomaly"
+                          />
+                        ) : (
+                          ""
+                        )}
+                      </td>
+                      <td className="muted">{fmtDateTime(r.finished_at)}</td>
+                      {isDev && (
+                        <td data-cy="run-expand-toggle">
+                          {r.prod_diff_severity ? (
+                            <ProdDiffBadge severity={r.prod_diff_severity} />
+                          ) : canExpand ? (
+                            <span className="muted">{isOpen ? "▾" : "▸"}</span>
+                          ) : (
+                            ""
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                    {isOpen && r.id != null && (
+                      <tr>
+                        <td colSpan={runCols}>
+                          {diffs[r.id] === "loading" && <div className="empty">loading diff…</div>}
+                          {diffs[r.id] === "error" && (
+                            <div className="empty">
+                              no diff — re-run this dev DAG to populate its profile snapshot.
+                            </div>
+                          )}
+                          {diffs[r.id] && diffs[r.id] !== "loading" && diffs[r.id] !== "error" && (
+                            <ProdDiffDetail diff={diffs[r.id] as ProdDiff} />
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          <PaginationControls p={runsPg} cyPrefix="runs" />
+        </>
       )}
 
       <h3>Postgres status</h3>
       {preview === "ok" && snap ? (
         <div data-cy="pg-status">
           <div className="rowflex">
-            <span className="muted">{snap.schema}.{snap.name}</span>
+            <span className="muted">
+              {snap.schema}.{snap.name}
+            </span>
             <span>{snap.row_count} rows</span>
           </div>
-          {snap.sample_rows.length > 0 && (
-            <table className="grid">
-              <thead>
-                <tr>
-                  {Object.keys(snap.sample_rows[0]).map((k) => (
-                    <th key={k}>{k}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {snap.sample_rows.slice(0, 8).map((row, i) => (
-                  <tr key={i}>
-                    {Object.values(row).map((v, j) => (
-                      <td key={j} className="muted">{String(v)}</td>
+          {sampleRows.length > 0 && (
+            <>
+              <table className="grid">
+                <thead>
+                  <tr>
+                    {Object.keys(sampleRows[0]).map((k) => (
+                      <th key={k}>{k}</th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {samplePg.pageItems.map((row, i) => (
+                    <tr key={i}>
+                      {Object.entries(row).map(([k, v], j) => (
+                        <td key={j} className="muted">
+                          <TruncatedCell value={v} max={48} modalTitle={k} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <PaginationControls p={samplePg} cyPrefix="samples" />
+            </>
           )}
         </div>
       ) : (
