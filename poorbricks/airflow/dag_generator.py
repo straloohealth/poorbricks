@@ -11,8 +11,14 @@ worker pod:
    ``env_from``.
 3. Executes ``poorbricks run --pipeline <key> --mode production`` or
    ``poorbricks check --pipeline <key>`` (see ``TaskConfig.command``).
-4. Prefers a Spot VM (soft node-affinity on ``cloud.google.com/gke-spot``
-   plus a toleration for the ``spot`` taint), falling back to on-demand.
+4. Requires a Spot VM (hard node-affinity on ``cloud.google.com/gke-spot``
+   plus a toleration for the ``spot`` taint). A required (not preferred)
+   affinity is what actually keeps jobs on Spot: a soft preference still lets
+   the scheduler pack a pod onto an idle on-demand node and never triggers the
+   autoscaler to grow the Spot pool, so most jobs ended up on-demand. With the
+   hard constraint a pod that finds no Spot capacity stays Pending until the
+   autoscaler adds a Spot node (up to ``startup_timeout_seconds``); spot
+   evictions are covered by the task ``retries`` + the idempotent write.
 """
 
 from __future__ import annotations
@@ -263,14 +269,19 @@ def _render_volumes_and_env() -> str:
             )
         ]
 
-        # Prefer a Spot VM (soft — falls back to on-demand) and tolerate the
-        # Spot taint so the pod is allowed onto the spot node pool.
+        # Require a Spot VM and tolerate the Spot taint so the pod is allowed
+        # onto the spot node pool. A *required* (not preferred) affinity is
+        # deliberate: a soft preference lets the scheduler fall back to an idle
+        # on-demand node and never triggers the autoscaler to grow the Spot
+        # pool, so jobs drifted onto on-demand. Required keeps every job on
+        # Spot — a pod with no Spot slot stays Pending until the autoscaler
+        # adds a Spot node (bounded by startup_timeout_seconds); evictions are
+        # covered by task retries + the idempotent staging-swap write.
         _AFFINITY = k8s.V1Affinity(
             node_affinity=k8s.V1NodeAffinity(
-                preferred_during_scheduling_ignored_during_execution=[
-                    k8s.V1PreferredSchedulingTerm(
-                        weight=100,
-                        preference=k8s.V1NodeSelectorTerm(
+                required_during_scheduling_ignored_during_execution=k8s.V1NodeSelector(
+                    node_selector_terms=[
+                        k8s.V1NodeSelectorTerm(
                             match_expressions=[
                                 k8s.V1NodeSelectorRequirement(
                                     key="cloud.google.com/gke-spot",
@@ -278,9 +289,9 @@ def _render_volumes_and_env() -> str:
                                     values=["true"],
                                 )
                             ]
-                        ),
-                    )
-                ]
+                        )
+                    ]
+                )
             )
         )
 
