@@ -128,9 +128,11 @@ def test_code_fetched_via_init_container() -> None:
     assert "alpine/git" not in source
 
 
-def test_workers_prefer_spot() -> None:
-    """Worker pods carry soft affinity for Spot nodes and tolerate the Spot
-    taint, so they prefer preemptible VMs but fall back to on-demand."""
+def test_workers_require_spot() -> None:
+    """Worker pods carry hard (required) affinity for Spot nodes and tolerate
+    the Spot taint, so every job runs on a preemptible VM — a missing Spot slot
+    keeps the pod Pending (autoscaler grows the Spot pool) rather than spilling
+    onto on-demand."""
     wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
     source = generate_dag_file(
         wf,
@@ -138,9 +140,10 @@ def test_workers_prefer_spot() -> None:
         image="img",
     )
     ast.parse(source)
-    # Soft (preferred, not required) node affinity on the GKE Spot label.
+    # Hard (required, not preferred) node affinity on the GKE Spot label.
     assert "affinity=_AFFINITY" in source
-    assert "preferred_during_scheduling_ignored_during_execution" in source
+    assert "required_during_scheduling_ignored_during_execution" in source
+    assert "preferred_during_scheduling_ignored_during_execution" not in source
     assert "cloud.google.com/gke-spot" in source
     # Toleration for the spot taint so the pod is admitted onto the pool.
     assert "tolerations=_TOLERATIONS" in source
@@ -182,14 +185,15 @@ def test_dev_env_vars_rendered() -> None:
 
 def test_no_node_selector() -> None:
     """Workers no longer pin to the poorbricks.io/dags node — that pinning
-    only existed so the RWO code PVC could attach."""
+    only existed so the RWO code PVC could attach. (Spot placement is a
+    required node-affinity term, not a ``node_selector=`` operator kwarg.)"""
     wf = _wf((TaskConfig(id="t", pipeline="postgres:t"),))
     source = generate_dag_file(
         wf,
         prefix="r",
         image="img",
     )
-    assert "node_selector" not in source
+    assert "node_selector=" not in source
     assert "NODE_SELECTOR" not in source
     assert "poorbricks.io/dags" not in source
 
