@@ -469,8 +469,8 @@ def _validate_contract_sources(inputs_cls: type[Inputs]) -> list[str]:
 
 
 def _coalesce_defaults(
-    df: "DataFrame", defaults: dict[str, Any]
-) -> tuple["DataFrame", dict[str, int]]:
+    df: DataFrame, defaults: dict[str, Any]
+) -> tuple[DataFrame, dict[str, int]]:
     """Fill nulls in ``defaults`` columns (present in ``df``) with their default.
 
     Keeps every row (coalesce, not filter) so the contract stays non-nullable.
@@ -493,8 +493,8 @@ def _coalesce_defaults(
 
 
 def _apply_imputations(
-    df: "DataFrame", meta: PipelineMeta
-) -> tuple["DataFrame", dict[str, int]]:
+    df: DataFrame, meta: PipelineMeta
+) -> tuple[DataFrame, dict[str, int]]:
     """Apply the pipeline's ``Expectations.IMPUTE_DEFAULTS`` to ``df``.
 
     Runs BEFORE schema validation so the imputed value satisfies the NotNull
