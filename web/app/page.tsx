@@ -41,40 +41,48 @@ export default function MainPage() {
           {error}
         </div>
       )}
-      <AlertsPanel runtime={runtime} verification={verification} loading={!loaded} />
+      {/* Two panes that scroll independently: graphs on the left, the selected
+          table's detail on the right (picked from the lineage graph). */}
+      <div className="split2" data-cy="split-layout">
+        <div className="col" data-cy="col-graphs">
+          <AlertsPanel runtime={runtime} verification={verification} loading={!loaded} />
 
-      <section className="panel">
-        <h2>Lineage navigator</h2>
-        <p className="muted">
-          Click a table to highlight its{" "}
-          <span style={{ color: "var(--info)" }}>sources</span> and{" "}
-          <span style={{ color: "var(--ok)" }}>destinations</span>, and load its detail.
-        </p>
-        {!loaded ? (
-          <div className="empty">Loading lineage…</div>
-        ) : graph.nodes.length === 0 ? (
-          <div className="empty">{error ? "Lineage unavailable." : "No contracts found."}</div>
-        ) : (
-          <LineageGraph graph={graph} selected={selected} onSelect={setSelected} />
-        )}
-        <div className="rowflex" style={{ marginTop: "0.5rem" }}>
-          <label className="muted">Inspect:</label>
-          <select
-            data-cy="table-picker"
-            value={selected ?? ""}
-            onChange={(e) => setSelected(e.target.value || null)}
-          >
-            <option value="">—</option>
-            {graph.nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.label}
-              </option>
-            ))}
-          </select>
+          <section className="panel">
+            <h2>Lineage navigator</h2>
+            <p className="muted">
+              Click a table to highlight its{" "}
+              <span style={{ color: "var(--info)" }}>sources</span> and{" "}
+              <span style={{ color: "var(--ok)" }}>destinations</span>, and load its detail.
+            </p>
+            {!loaded ? (
+              <div className="empty">Loading lineage…</div>
+            ) : graph.nodes.length === 0 ? (
+              <div className="empty">{error ? "Lineage unavailable." : "No contracts found."}</div>
+            ) : (
+              <LineageGraph graph={graph} selected={selected} onSelect={setSelected} />
+            )}
+            <div className="rowflex" style={{ marginTop: "0.5rem" }}>
+              <label className="muted">Inspect:</label>
+              <select
+                data-cy="table-picker"
+                value={selected ?? ""}
+                onChange={(e) => setSelected(e.target.value || null)}
+              >
+                <option value="">—</option>
+                {graph.nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </section>
         </div>
-      </section>
 
-      <TableDetail table={selected} environment="prod" />
+        <div className="col" data-cy="col-detail">
+          <TableDetail table={selected} environment="prod" />
+        </div>
+      </div>
     </div>
   );
 }

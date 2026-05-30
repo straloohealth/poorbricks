@@ -1,7 +1,10 @@
 "use client";
 
 import { tableOf, type RunRecord } from "@/lib/api";
+import { fmtDateTime } from "@/lib/datetime";
 import { rowActivate } from "@/lib/interactive";
+import { usePagination } from "@/lib/usePagination";
+import { PaginationControls } from "@/components/PaginationControls";
 
 export function AirflowHistory({
   runs,
@@ -14,6 +17,7 @@ export function AirflowHistory({
   selected: string | null;
   onSelect: (table: string) => void;
 }) {
+  const pg = usePagination(runs, 25);
   return (
     <section className="panel" data-cy="airflow-history">
       <div className="rowflex">
@@ -38,7 +42,7 @@ export function AirflowHistory({
             </tr>
           </thead>
           <tbody>
-            {runs.slice(0, 25).map((r, i) => {
+            {pg.pageItems.map((r, i) => {
               const t = tableOf(r.pipeline_key);
               return (
                 <tr
@@ -57,13 +61,14 @@ export function AirflowHistory({
                   </td>
                   <td>{r.row_count ?? ""}</td>
                   <td className="muted">{r.duration_s}</td>
-                  <td className="muted">{r.finished_at ?? ""}</td>
+                  <td className="muted">{fmtDateTime(r.finished_at)}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       )}
+      <PaginationControls p={pg} cyPrefix="airflow" />
     </section>
   );
 }

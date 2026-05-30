@@ -1,7 +1,11 @@
 "use client";
 
+import { useMemo } from "react";
 import { tableOf, type StalenessVerdict } from "@/lib/api";
+import { fmtDateTime } from "@/lib/datetime";
 import { rowActivate } from "@/lib/interactive";
+import { usePagination } from "@/lib/usePagination";
+import { PaginationControls } from "@/components/PaginationControls";
 
 function ageLabel(s: number | null): string {
   if (s == null) return "never";
@@ -18,7 +22,10 @@ export function StaleList({
   onSelect?: (table: string) => void;
   loading?: boolean;
 }) {
-  const stale = verdicts.filter((v) => v.state !== "ok");
+  // Memoise so the derived array keeps a stable identity across renders —
+  // otherwise usePagination would reset to page 0 on every render.
+  const stale = useMemo(() => verdicts.filter((v) => v.state !== "ok"), [verdicts]);
+  const pg = usePagination(stale, 15);
   return (
     <section className="panel" data-cy="stale-list">
       <h2>Stale datasets</h2>
@@ -40,7 +47,7 @@ export function StaleList({
             </tr>
           </thead>
           <tbody>
-            {stale.map((v) => (
+            {pg.pageItems.map((v) => (
               <tr
                 key={v.pipeline_key}
                 data-cy="stale-row"
@@ -51,7 +58,7 @@ export function StaleList({
                 <td>
                   <span className={`badge ${v.state}`}>{v.state}</span>
                 </td>
-                <td className="muted">{v.last_run ?? "—"}</td>
+                <td className="muted">{fmtDateTime(v.last_run)}</td>
                 <td className="muted">{ageLabel(v.age_s)}</td>
                 <td className="muted">every {ageLabel(v.interval_s)}</td>
               </tr>
@@ -59,6 +66,7 @@ export function StaleList({
           </tbody>
         </table>
       )}
+      {stale.length > 0 && <PaginationControls p={pg} cyPrefix="stale" />}
     </section>
   );
 }

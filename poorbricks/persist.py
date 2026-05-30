@@ -203,6 +203,9 @@ def _serialize_expectations(expectations_cls: type[Any] | None) -> dict[str, Any
         "row_count_anomaly_method": getattr(
             expectations_cls, "ROW_COUNT_ANOMALY_METHOD", None
         ),
+        "row_count_anomaly_pct": getattr(
+            expectations_cls, "ROW_COUNT_ANOMALY_PCT", None
+        ),
         "regression_enabled": getattr(expectations_cls, "REGRESSION_ENABLED", True),
         "regression_join_keys": getattr(expectations_cls, "REGRESSION_JOIN_KEYS", None),
     }
@@ -488,6 +491,7 @@ def run_and_persist(
     result: RunResult | None = None
     anomaly_payload: dict[str, Any] | None = None
     drift_payload: dict[str, Any] | None = None
+    profile_snapshot: dict[str, Any] | None = None
 
     try:
         result = run(pipeline_key, mode, scenario_name)
@@ -557,6 +561,23 @@ def run_and_persist(
             row_count = (
                 result.rows if result.rows is not None else profile.get("row_count")
             )
+
+        # Capture a profile snapshot for every run (cheap — the profile is
+        # already computed) so a dev run can be diffed against the current prod
+        # contract baseline (poorbricks/prod_diff.py). Assembled BEFORE the dev
+        # early-return below, since dev runs don't push a contract and this is
+        # their only persisted profile.
+        profile_snapshot = {
+            "row_count": row_count,
+            "null_rates": (profile or {}).get("null_rates", {}),
+            "enum_samples": (profile or {}).get("enum_samples", {}),
+            "fields": _flatten_fields(
+                schema_json, _literal_columns_for_meta(meta), result.lineage
+            ),
+            "expectations": _serialize_expectations(exp_cls),
+            "schema_hash": schema_hash,
+            "anomaly": anomaly_payload,
+        }
 
         if not publish_contract:
             # Dev run: skip the contract push entirely. The data is in the dev
@@ -651,6 +672,7 @@ def run_and_persist(
             anomaly=anomaly_payload,
             drift_summary=drift_payload,
             timings=dict(result.timings) if result is not None else {},
+            profile_snapshot=profile_snapshot,
         )
         _safe_record(rec)
 

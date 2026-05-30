@@ -7,6 +7,10 @@ const LINKS = [
   { href: "/", label: "Main" },
   { href: "/live", label: "Live Now" },
   { href: "/errors", label: "Errors" },
+  { href: "/ask", label: "Ask Cosmo" },
+  { href: "/docs", label: "Docs" },
+  { href: "/glossary", label: "Glossary" },
+  { href: "/memory", label: "Memory" },
 ];
 
 export function Nav() {

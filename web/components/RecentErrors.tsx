@@ -1,6 +1,7 @@
 "use client";
 
 import { tableOf, type RunRecord } from "@/lib/api";
+import { fmtDateTime } from "@/lib/datetime";
 import { rowActivate } from "@/lib/interactive";
 import { errorHeadline } from "@/lib/errorFormat";
 
@@ -48,7 +49,7 @@ export function RecentErrors({
             style={{ cursor: onSelect ? "pointer" : undefined }}
           >
             <span className="k">{tableOf(r.pipeline_key)}</span>{" "}
-            <span className="pk">{r.finished_at ?? ""}</span>
+            <span className="pk">{fmtDateTime(r.finished_at)}</span>
             <div className="muted" data-cy="error-headline">{errorHeadline(r.error)}</div>
           </div>
         ))

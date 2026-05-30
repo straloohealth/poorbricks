@@ -26,7 +26,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterable
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Response, Upload
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from poorbricks.airflow import (
     LocalDagStore,
@@ -197,6 +198,52 @@ def runs_endpoint(limit: int = 100) -> list[dict[str, Any]]:
     return out
 
 
+@app.get("/v1/runs/{run_id}/prod-diff")
+def run_prod_diff_endpoint(run_id: int) -> dict[str, Any]:
+    """How a (dev) run diverges from the current production baseline.
+
+    Compares the run's persisted ``profile_snapshot`` (row count, null
+    distribution, fields, expectations) against the published prod contract and
+    returns a structured diff with a ``severity`` rollup. 404 when the run has
+    no snapshot (recorded before snapshots existed → re-run the dev DAG).
+    """
+    from poorbricks.prod_diff import compute_prod_diff
+    from poorbricks.run_history import RunHistoryStore
+    from utils.contracts import fetch_contract_from_mongo
+
+    rec = RunHistoryStore().get(run_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"no run {run_id}")
+    if not rec.profile_snapshot:
+        raise HTTPException(
+            status_code=404,
+            detail="run has no profile snapshot — re-run this dev DAG to populate it",
+        )
+    try:
+        contract = fetch_contract_from_mongo(rec.table_name)
+    except Exception:  # noqa: BLE001
+        contract = None
+    if not contract:
+        raise HTTPException(
+            status_code=404, detail=f"no published prod contract for {rec.table_name!r}"
+        )
+
+    diff = compute_prod_diff(
+        rec.profile_snapshot,
+        contract.get("profile") or {},
+        contract.get("fields") or [],
+        contract.get("expectations") or {},
+    )
+    prod_sha = (contract.get("last_run") or {}).get("sha")
+    return {
+        "run_id": run_id,
+        "table": rec.table_name,
+        "prod_sha": prod_sha,
+        "dev_sha": rec.sha,
+        **diff,
+    }
+
+
 def _error_headline(err: str | None) -> str:
     """Collapse a (possibly multi-line) error/stacktrace to one readable line.
 
@@ -316,6 +363,82 @@ def source_endpoint(table_name: str) -> dict[str, Any]:
         "prefix": prefix,
         "files": files,
     }
+
+
+# Files we serve source for + accept comments on (see source_endpoint).
+_SOURCE_FILES = {"transform.py", "pipeline.py", "config.py", "fixtures.py"}
+
+
+class CommentCreate(BaseModel):
+    """Body for POST /v1/source/{table}/comments (anonymous — no author)."""
+
+    file: str
+    line_start: int
+    line_end: int
+    body: str
+    release_sha: str | None = None
+
+
+def _latest_sha_for_table(table_name: str) -> str | None:
+    """Best-effort release SHA for a table = its latest successful prod run."""
+    try:
+        from poorbricks.run_history import RunHistoryStore
+        from utils.contracts import fetch_contract_from_mongo
+
+        pipeline_key = (fetch_contract_from_mongo(table_name) or {}).get("pipeline_key")
+        if not pipeline_key:
+            return None
+        store = RunHistoryStore()
+        rec = store.last_successful(pipeline_key, environment="prod") or store.last_successful(
+            pipeline_key
+        )
+        return rec.sha if rec else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.get("/v1/source/{table_name}/comments")
+def list_comments_endpoint(table_name: str, file: str | None = None) -> list[dict[str, Any]]:
+    """All PR-style line comments for a table's source (optionally one file)."""
+    from poorbricks.code_comments import list_comments
+
+    return [c.to_public() for c in list_comments(table_name, file)]
+
+
+@app.post("/v1/source/{table_name}/comments")
+def add_comment_endpoint(table_name: str, payload: CommentCreate) -> dict[str, Any]:
+    """File a line-anchored comment. Tagged with the release SHA it was filed in
+    (the client's, or the table's latest prod run). Persists until deleted."""
+    from poorbricks.code_comments import CodeComment, add_comment
+
+    if payload.file not in _SOURCE_FILES:
+        raise HTTPException(
+            status_code=400, detail=f"file must be one of {sorted(_SOURCE_FILES)}"
+        )
+    if payload.line_start < 1 or payload.line_end < payload.line_start:
+        raise HTTPException(status_code=400, detail="invalid line range")
+    if not payload.body.strip():
+        raise HTTPException(status_code=400, detail="empty comment body")
+
+    comment = CodeComment(
+        table_name=table_name,
+        file=payload.file,
+        line_start=payload.line_start,
+        line_end=payload.line_end,
+        body=payload.body.strip(),
+        release_sha=payload.release_sha or _latest_sha_for_table(table_name),
+    )
+    return add_comment(comment).to_public()
+
+
+@app.delete("/v1/source/{table_name}/comments/{comment_id}")
+def delete_comment_endpoint(table_name: str, comment_id: str) -> dict[str, Any]:
+    """Delete one comment (manual removal — comments never auto-expire)."""
+    from poorbricks.code_comments import delete_comment
+
+    if not delete_comment(comment_id, table_name):
+        raise HTTPException(status_code=404, detail=f"no comment {comment_id}")
+    return {"ok": True, "deleted": comment_id}
 
 
 @app.post("/v1/contracts/{table_name}/descriptions")
@@ -954,10 +1077,15 @@ def _handle_upload(
         )
         dag_names: list[str] = []
         for wf in workflows:
+            # Dev DAGs are manual-trigger-only: strip the cron so Airflow never
+            # auto-runs them (they're triggered via POST /v1/dags/{id}/run) and
+            # they're never evaluated for staleness. ``generate_dag_file`` reads
+            # the schedule off the WorkflowConfig, so we null it on a copy here.
+            gen_wf = replace(wf, schedule=None) if environment == "dev" else wf
             content = generate_dag_file(
-                wf,
+                gen_wf,
                 prefix=effective_prefix,
-                image=wf.image or cfg.worker_image,
+                image=gen_wf.image or cfg.worker_image,
                 namespace=cfg.worker_namespace,
                 runtime_secret=cfg.runtime_secret_name,
                 sha=sha,
@@ -1085,9 +1213,13 @@ def _regenerate_all(cfg: ApiSettings, only_prefix: str | None = None) -> dict[st
             dag_ref = f"{prefix}/{name}"
             try:
                 parsed = parse_generated_dag(dag_store.get(prefix, name))
+                # Dev DAGs stay manual-trigger-only across regenerates, even if
+                # an older stored DAG still carries a cron (belt-and-suspenders
+                # with the upload path).
+                schedule = None if environment == "dev" else parsed.schedule
                 workflow = WorkflowConfig(
                     name=name,
-                    schedule=parsed.schedule,
+                    schedule=schedule,
                     tasks=parsed.tasks,
                 )
                 # Bake the *current* worker image, not the one parsed from the
