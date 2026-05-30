@@ -455,6 +455,16 @@ def alerts_endpoint(environment: str = "prod") -> dict[str, list[dict[str, Any]]
     return grouped
 
 
+def _all_null_columns(null_rates: dict[str, float], exclude: set[str]) -> list[str]:
+    """Columns whose profiled null rate is 100%, excluding already-reported ones.
+
+    A fully-NULL column is the empirical signature of a dropped/mis-sourced
+    source key (a semantic-FK rename whose raw key was dropped at read time) or
+    a dead column. Pure + sorted for a stable, unit-testable guard.
+    """
+    return sorted(k for k, r in null_rates.items() if r == 1.0 and k not in exclude)
+
+
 @app.get("/v1/verification")
 def verification_endpoint() -> dict[str, list[dict[str, Any]]]:
     """Static contract findings — stub columns, literals, cross-table breaks."""
@@ -507,6 +517,30 @@ def verification_endpoint() -> dict[str, list[dict[str, Any]]]:
                     "summary": (
                         f"bad source data defaulted in {len(imputed)} column(s): "
                         f"{detail} — non-nullable column had null/missing source values"
+                    ),
+                }
+            )
+        # All-NULL guard: a column that is 100% NULL is almost always a dropped /
+        # mis-sourced source — typically a semantic-FK rename whose raw key was
+        # dropped at read time (smith_terms_of_use.patient_id, hermes_messages.
+        # navigator_id, deadpool_navigator_tiers.mongo_version) — or a dead
+        # column. Stubs (no-lineage all-null) are reported above; flag the rest,
+        # calling out FK-shaped (*_id) columns since those silently break joins.
+        all_null = _all_null_columns(null_rates, exclude=set(stub))
+        if all_null:
+            fk_like = [k for k in all_null if k.endswith(("_id", "_kid"))]
+            grouped["warn"].append(
+                {
+                    "kind": "all_null",
+                    "pipeline_key": name,
+                    "summary": (
+                        f"{len(all_null)} column(s) 100% NULL "
+                        f"(dropped/mis-sourced?): {_trunc(all_null)}"
+                        + (
+                            f" — FK joins affected: {', '.join(fk_like)}"
+                            if fk_like
+                            else ""
+                        )
                     ),
                 }
             )
