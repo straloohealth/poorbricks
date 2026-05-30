@@ -54,6 +54,10 @@ class RunResult:
     # Column-level lineage captured from the Spark analyzed plan in
     # _execute_pipeline (best-effort; None when capture is unavailable).
     lineage: dict[str, Any] | None = None
+    # {column: imputed_row_count} for non-nullable columns whose source nulls
+    # were coalesced to their Expectations.IMPUTE_DEFAULTS default (before
+    # schema validation). Surfaced as a non-critical warning on the contract.
+    imputations: dict[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +468,48 @@ def _validate_contract_sources(inputs_cls: type[Inputs]) -> list[str]:
     return errors
 
 
+def _coalesce_defaults(
+    df: "DataFrame", defaults: dict[str, Any]
+) -> tuple["DataFrame", dict[str, int]]:
+    """Fill nulls in ``defaults`` columns (present in ``df``) with their default.
+
+    Keeps every row (coalesce, not filter) so the contract stays non-nullable.
+    Returns the rewritten DataFrame and ``{column: imputed_row_count}`` for
+    columns where ≥1 row was defaulted. No-op when nothing applies.
+    """
+    present = [c for c in defaults if c in df.columns]
+    if not present:
+        return df, {}
+    from pyspark.sql import functions as f
+
+    counts_row = df.agg(
+        *[f.sum(f.col(c).isNull().cast("long")).alias(c) for c in present]
+    ).first()
+    counts = counts_row.asDict() if counts_row is not None else {}
+    imputed = {c: int(counts.get(c) or 0) for c in present if (counts.get(c) or 0) > 0}
+    for c in present:
+        df = df.withColumn(c, f.coalesce(f.col(c), f.lit(defaults[c])))
+    return df, imputed
+
+
+def _apply_imputations(
+    df: "DataFrame", meta: PipelineMeta
+) -> tuple["DataFrame", dict[str, int]]:
+    """Apply the pipeline's ``Expectations.IMPUTE_DEFAULTS`` to ``df``.
+
+    Runs BEFORE schema validation so the imputed value satisfies the NotNull
+    rules while the contract stays non-nullable. No-op when none declared.
+    """
+    from validation.expectations import find_expectations_class
+
+    try:
+        exp_cls = find_expectations_class(f"{meta.target_storage}:{meta.table_name}")
+    except Exception:  # noqa: BLE001 — synthetic/test pipelines have no config module
+        exp_cls = None
+    defaults = dict(getattr(exp_cls, "IMPUTE_DEFAULTS", {}) or {}) if exp_cls else {}
+    return _coalesce_defaults(df, defaults)
+
+
 def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
     """Compute and verify a pipeline's output against its schema.
 
@@ -474,7 +520,11 @@ def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
     """
     from pyspark.storagelevel import StorageLevel
 
-    df = cast("DataFrame", meta.original_fn(inputs)).persist(StorageLevel.DISK_ONLY)
+    df = cast("DataFrame", meta.original_fn(inputs))
+    # Impute declared bad-source nulls BEFORE validation so NotNull rules pass
+    # (the contract stays non-nullable; the imputed-row counts ride the result).
+    df, imputations = _apply_imputations(df, meta)
+    df = df.persist(StorageLevel.DISK_ONLY)
     errors: list[str] = []
     try:
         meta.model.verify(df, strict=True)  # type: ignore[attr-defined]
@@ -492,7 +542,9 @@ def _execute_pipeline(meta: PipelineMeta, inputs: Inputs) -> RunResult:
     except Exception:  # noqa: BLE001 — lineage is advisory
         lineage = None
 
-    return RunResult(df=df, rows=df.count(), errors=errors, lineage=lineage)
+    return RunResult(
+        df=df, rows=df.count(), errors=errors, lineage=lineage, imputations=imputations
+    )
 
 
 # ---------------------------------------------------------------------------

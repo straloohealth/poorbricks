@@ -453,32 +453,6 @@ def _analyze_data_health(
     return anomaly_dict, regression_dict
 
 
-def _apply_imputations(df: Any, exp_cls: type | None) -> tuple[Any, dict[str, int]]:
-    """Coalesce declared non-nullable columns' source nulls to their default.
-
-    Reads ``Expectations.IMPUTE_DEFAULTS`` ({column: default}) and, for each
-    declared column present in ``df``, fills nulls with the default — keeping
-    the rows and the non-nullable contract intact. Returns the (possibly
-    rewritten) DataFrame and ``{column: imputed_row_count}`` for columns where
-    at least one row was defaulted, so the count can be stored on the contract
-    and surfaced as a non-critical warning. A no-op when nothing is declared.
-    """
-    defaults = dict(getattr(exp_cls, "IMPUTE_DEFAULTS", {}) or {}) if exp_cls else {}
-    present = [c for c in defaults if c in getattr(df, "columns", [])]
-    if not present:
-        return df, {}
-
-    from pyspark.sql import functions as f
-
-    counts_row = df.agg(
-        *[f.sum(f.col(c).isNull().cast("long")).alias(c) for c in present]
-    ).first()
-    imputed = {c: int(counts_row[c] or 0) for c in present if (counts_row[c] or 0) > 0}
-    for c in present:
-        df = df.withColumn(c, f.coalesce(f.col(c), f.lit(defaults[c])))
-    return df, imputed
-
-
 def run_and_persist(
     pipeline_key: str,
     mode: str = "fixtures",
@@ -536,11 +510,10 @@ def run_and_persist(
         schema_json = schema.jsonValue()
         schema_hash = _schema_hash(schema_json)
 
-        # Impute declared non-nullable columns whose source carried nulls
-        # (Expectations.IMPUTE_DEFAULTS), BEFORE the write so the contract stays
-        # non-nullable. The imputed-row counts ride the contract and surface as
-        # a non-critical warning in /v1/verification.
-        result.df, imputations = _apply_imputations(result.df, exp_cls)
+        # Source-null imputation already ran in _execute_pipeline (before schema
+        # validation); surface the counts on the contract as a non-critical
+        # warning in /v1/verification.
+        imputations = result.imputations
         if imputations:
             print(
                 f"[impute] {meta.target_storage}:{meta.table_name}: "

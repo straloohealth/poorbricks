@@ -13,8 +13,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import BooleanType, StringType, StructField, StructType
 
 from poorbricks.inputs import MongoSource
-from poorbricks.persist import _apply_imputations
-from validation.expectations import Expectations
+from poorbricks.runner import _coalesce_defaults
 
 
 def _contract_schema() -> StructType:
@@ -54,41 +53,31 @@ def test_read_schema_is_strict_when_nothing_declared() -> None:
     assert all(not f.nullable for f in src.read_schema.fields)
 
 
-class _Exp(Expectations):
-    IMPUTE_DEFAULTS = {"is_active": False}
-
-
-def test_apply_imputations_coalesces_nulls_and_counts(spark: SparkSession) -> None:
+def test_coalesce_defaults_fills_nulls_and_counts(spark: SparkSession) -> None:
     df = _nullable_df(spark, [("a", True), ("b", None), ("c", None)])
-    out, imputed = _apply_imputations(df, _Exp)
+    out, imputed = _coalesce_defaults(df, {"is_active": False})
     assert imputed == {"is_active": 2}
     rows = {r["id"]: r["is_active"] for r in out.collect()}
     assert rows == {"a": True, "b": False, "c": False}  # rows kept, nulls -> default
     assert out.filter(out.is_active.isNull()).count() == 0
 
 
-def test_apply_imputations_records_nothing_when_no_nulls(spark: SparkSession) -> None:
+def test_coalesce_defaults_records_nothing_when_no_nulls(spark: SparkSession) -> None:
     df = _nullable_df(spark, [("a", True), ("b", False)])
-    _out, imputed = _apply_imputations(df, _Exp)
+    _out, imputed = _coalesce_defaults(df, {"is_active": False})
     assert imputed == {}  # nothing was defaulted
 
 
-def test_apply_imputations_noop_without_declared_defaults(spark: SparkSession) -> None:
-    class _NoExp(Expectations):
-        pass
-
+def test_coalesce_defaults_noop_without_declared_defaults(spark: SparkSession) -> None:
     df = _nullable_df(spark, [("a", None)])
-    out, imputed = _apply_imputations(df, _NoExp)
+    out, imputed = _coalesce_defaults(df, {})
     assert imputed == {}
     assert out is df  # untouched DataFrame
 
 
-def test_apply_imputations_ignores_undeclared_columns(spark: SparkSession) -> None:
+def test_coalesce_defaults_ignores_undeclared_columns(spark: SparkSession) -> None:
     # A default for a column not in the DataFrame is simply skipped.
-    class _Exp2(Expectations):
-        IMPUTE_DEFAULTS = {"missing_col": 0, "is_active": False}
-
     df = _nullable_df(spark, [("a", None)])
-    out, imputed = _apply_imputations(df, _Exp2)
+    out, imputed = _coalesce_defaults(df, {"missing_col": 0, "is_active": False})
     assert imputed == {"is_active": 1}
     assert out.filter(out.is_active.isNull()).count() == 0
