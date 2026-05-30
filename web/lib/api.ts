@@ -7,8 +7,10 @@ export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8088";
 
 // Cosmo's knowledge API (Ask / Docs / Glossary / Memory) is a separate service.
+// Hardcoded default to the Tailscale ingress so the UI build doesn't need the
+// NEXT_PUBLIC_COSMO_URL build-arg; override it locally for dev.
 export const COSMO_BASE =
-  process.env.NEXT_PUBLIC_COSMO_URL ?? "http://localhost:8077";
+  process.env.NEXT_PUBLIC_COSMO_URL ?? "https://cosmo.stingray-ordinal.ts.net";
 
 export type Severity = "error" | "warn" | "info";
 export type Grouped<T> = Record<Severity, T[]>;
