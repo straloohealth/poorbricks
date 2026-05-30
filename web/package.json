@@ -13,7 +13,7 @@
     "cy:e2e": "cypress run --e2e --browser ${CY_BROWSER:-firefox}"
   },
   "dependencies": {
-    "next": "14.2.35",
+    "next": "15.5.18",
     "react": "^18",
     "react-dom": "^18",
     "reactflow": "^11.11.4",
