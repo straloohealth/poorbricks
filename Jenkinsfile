@@ -3,7 +3,7 @@
 // poorbricks CI/CD on Jenkins — Spark medallion ETL framework. Mirrors the
 // CircleCI test+deploy workflows via the `tools` library. Tests run on every
 // branch (and gate the deploy by sequential ordering); publish + build + the two
-// k8s deploys run on main (and ci/jenkins for verification).
+// k8s deploys run on main.
 //
 // All test stages use the Spark-capable databricks image with mongo:7 + postgres
 // sidecars (poorbricks's docker_images) and install deps with privateRegistry:false
@@ -108,8 +108,7 @@ pipeline {
     }
 
     stage('publish + build') {
-      // TEMP (CI verification): also run on ci/jenkins. Revert to `branch 'main'`.
-      when { anyOf { branch 'main'; branch 'ci/jenkins' } }
+      when { branch 'main' }
       parallel {
         stage('publish-python-package') {
           when { expression { return false } }  // HELD: poorbricks publish paused (work in progress)
@@ -125,7 +124,7 @@ pipeline {
     }
 
     stage('deploy') {
-      when { expression { return false } }  // HELD: poorbricks deploys paused per request (work in progress) — restore to `anyOf { branch 'main'; branch 'ci/jenkins' }`
+      when { expression { return false } }  // HELD: poorbricks deploys paused per request (work in progress) — restore to `branch 'main'`
       parallel {
         stage('deploy-api') {
           agent { kubernetes { yaml podTemplates.gke() } }
