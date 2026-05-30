@@ -58,6 +58,7 @@ def test_connect_with_retry_reraises_non_saturation_errors(monkeypatch):
     with pytest.raises(psycopg2.OperationalError, match="password"):
         _connect_with_retry(host="h")
 
+
 _DF_SCHEMA = StructType(
     [
         StructField("widget_id", StringType(), False),
