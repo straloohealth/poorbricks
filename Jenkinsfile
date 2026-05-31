@@ -124,7 +124,7 @@ pipeline {
     }
 
     stage('deploy') {
-      when { expression { return false } }  // HELD: poorbricks deploys paused per request (work in progress) — restore to `branch 'main'`
+      when { branch 'main' }  // restored: poorbricks deploys run on main again
       parallel {
         stage('deploy-api') {
           agent { kubernetes { yaml podTemplates.gke() } }
