@@ -6,6 +6,8 @@ out/
 # Generated artifacts and documentation
 artifacts/
 docs/
+# …but web/app/docs is a Next.js route (the Docs tab), not the Sphinx build dir.
+!web/app/docs/
 
 # Stray Spark scratch dirs created when `make ui` boots a local SparkSession
 derby.log
