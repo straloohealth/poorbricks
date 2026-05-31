@@ -123,6 +123,13 @@ pipeline {
       }
     }
 
+    stage('upload-knowledge') {
+      when { branch 'main' }
+      agent { kubernetes { yaml podTemplates.python() } }
+      steps { checkout scm; knowledgeUpload() }
+      post { failure { container('python') { notifySlack(event: 'fail') } } }
+    }
+
     stage('deploy') {
       when { branch 'main' }  // restored: poorbricks deploys run on main again
       parallel {
