@@ -120,20 +120,40 @@ pipeline {
           agent { kubernetes { yaml podTemplates.kaniko() } }
           steps { checkout scm; buildDocker(image: 'poorbricks/api', dockerfile: 'api/Dockerfile') }
         }
+        stage('build-ui') {
+          agent { kubernetes { yaml podTemplates.kaniko() } }
+          // NEXT_PUBLIC_* are inlined into the client bundle at build time, so they
+          // must be the browser-reachable prod ingresses (not in-cluster DNS).
+          steps {
+            checkout scm
+            buildDocker(
+              image: 'poorbricks/ui',
+              dockerfile: 'web/Dockerfile',
+              buildArgs: '--build-arg NEXT_PUBLIC_API_URL=https://airflow-poorbricks-server-ingress.stingray-ordinal.ts.net --build-arg NEXT_PUBLIC_COSMO_URL=https://cosmo.stingray-ordinal.ts.net',
+            )
+          }
+        }
       }
     }
 
+    stage('upload-knowledge') {
+      when { branch 'main' }
+      agent { kubernetes { yaml podTemplates.python() } }
+      steps { checkout scm; knowledgeUpload() }
+      post { failure { container('python') { notifySlack(event: 'fail') } } }
+    }
+
     stage('deploy') {
-      when { expression { return false } }  // HELD: poorbricks deploys paused per request (work in progress) — restore to `branch 'main'`
+      when { branch 'main' }  // restored: poorbricks deploys run on main again
       parallel {
         stage('deploy-api') {
           agent { kubernetes { yaml podTemplates.gke() } }
           steps { checkout scm; deployK8s(appName: 'poorbricks-api', kubernetesDirectory: 'deploy/k8s/api', canary: false, generateK8sConfig: false) }
           post { failure { container('gke') { notifySlack(event: 'fail') } } }
         }
-        stage('deploy-streamlit') {
+        stage('deploy-ui') {
           agent { kubernetes { yaml podTemplates.gke() } }
-          steps { checkout scm; deployK8s(appName: 'poorbricks-streamlit', kubernetesDirectory: 'deploy/k8s/streamlit', canary: false, generateK8sConfig: false) }
+          steps { checkout scm; deployK8s(appName: 'poorbricks-ui', kubernetesDirectory: 'deploy/k8s/ui', canary: false, generateK8sConfig: false) }
           post { failure { container('gke') { notifySlack(event: 'fail') } } }
         }
       }
