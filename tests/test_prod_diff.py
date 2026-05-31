@@ -41,18 +41,14 @@ def test_identical_snapshot_is_in_sync() -> None:
 
 
 def test_large_row_count_drop_is_major() -> None:
-    diff = compute_prod_diff(
-        _snapshot(row_count=7_000), PROD_PROFILE, PROD_FIELDS, {}
-    )
+    diff = compute_prod_diff(_snapshot(row_count=7_000), PROD_PROFILE, PROD_FIELDS, {})
     assert abs(diff["row_count"]["delta_pct"] + 0.3) < 1e-9  # -30%
     assert diff["row_count"]["major"] is True
     assert diff["severity"] == "major"
 
 
 def test_small_row_count_change_is_not_major() -> None:
-    diff = compute_prod_diff(
-        _snapshot(row_count=10_500), PROD_PROFILE, PROD_FIELDS, {}
-    )
+    diff = compute_prod_diff(_snapshot(row_count=10_500), PROD_PROFILE, PROD_FIELDS, {})
     assert diff["row_count"]["major"] is False
     # only a row-count wiggle, nothing else changed → none
     assert diff["severity"] == "none"
@@ -98,7 +94,9 @@ def test_retyped_field_is_minor() -> None:
         ]
     )
     diff = compute_prod_diff(snap, PROD_PROFILE, PROD_FIELDS, {})
-    assert diff["fields"]["retyped"] == [{"column": "id", "from": "string", "to": "long"}]
+    assert diff["fields"]["retyped"] == [
+        {"column": "id", "from": "string", "to": "long"}
+    ]
     assert diff["severity"] == "minor"
 
 
