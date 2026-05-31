@@ -77,12 +77,26 @@ spec:
         volumeMounts:
         - name: logs
           mountPath: /tmp/airflow-logs
+        # No probe before. `airflow jobs check` confirms the triggerer's async
+        # loop heartbeated recently. Generous timing tolerates transient DB blips.
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - airflow jobs check --job-type TriggererJob --hostname $(hostname)
+          initialDelaySeconds: 90
+          periodSeconds: 60
+          timeoutSeconds: 30
+          failureThreshold: 5
+        # limit > request so the asyncio loop can burst; the pinned 300m limit
+        # CFS-throttled it under load (a likely contributor to its 20-22 restarts).
         resources:
           requests:
             cpu: 300m
             memory: 768Mi
           limits:
-            cpu: 300m
+            cpu: 600m
             memory: 768Mi
       volumes:
       - name: logs

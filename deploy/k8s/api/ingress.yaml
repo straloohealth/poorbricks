@@ -5,6 +5,15 @@ metadata:
   namespace: airflow
 spec:
   ingressClassName: tailscale
+  # The Tailscale operator terminates HTTPS; without a `tls.hosts` block matching
+  # the served host it mis-terminated and returned 500 externally while the pod
+  # was healthy in-cluster (the UI ingress works precisely because it sets tls).
+  # We DELIBERATELY do NOT set `tailscale.com/hostname` here: with no override the
+  # operator keeps the default device name `airflow-poorbricks-server-ingress`,
+  # which is what `poorbricks/settings.py` (contracts_api_url) and
+  # `poorbricks/verify.py` hardcode. Renaming it would break those defaults.
+  # Keep the `rules`/path form (mirrors the working UI ingress); the load-bearing
+  # fix is the `tls.hosts` block below.
   rules:
     - http:
         paths:
@@ -15,3 +24,6 @@ spec:
                 name: poorbricks-server
                 port:
                   number: 8080
+  tls:
+    - hosts:
+        - airflow-poorbricks-server-ingress

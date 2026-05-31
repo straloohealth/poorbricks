@@ -96,6 +96,20 @@ spec:
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /tmp/airflow-logs
+        # No probe before: a wedged scheduler (DB error / deadlock) sat dead
+        # until manually noticed, contributing to the silent restart-churn.
+        # `airflow jobs check` confirms this scheduler heartbeated recently;
+        # generous timing so a transient DB slowdown can't restart it.
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - airflow jobs check --job-type SchedulerJob --hostname $(hostname) --limit 30
+          initialDelaySeconds: 90
+          periodSeconds: 60
+          timeoutSeconds: 30
+          failureThreshold: 5
         resources:
           requests:
             cpu: 500m

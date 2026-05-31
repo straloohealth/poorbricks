@@ -78,8 +78,11 @@ spec:
               value: poorbricks
             - name: CONTRACTS_COLLECTION
               value: data_contracts
+            # Analytics writes (run_history, table inspection) go through the
+            # PgBouncer transaction pooler, not -rw directly — see
+            # poorbricks/constants.py:DEFAULT_POSTGRES_HOST.
             - name: POSTGRES_HOST
-              value: postgresql-rw.storage.svc.cluster.local
+              value: postgresql-pooler-rw.storage.svc.cluster.local
             - name: POSTGRES_PORT
               value: "5432"
             - name: POSTGRES_DB

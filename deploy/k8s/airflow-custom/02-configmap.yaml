@@ -16,6 +16,23 @@ data:
     # at 15 to use the headroom without overrunning the Spot autoscaler.
     max_active_tasks_per_dag = 15
 
+    [database]
+    # Bound each control-plane component's connection pool so the 7 processes
+    # (2 scheduler + 2 webserver/api-server + 2 triggerer + 1 dag-processor)
+    # can't exhaust the shared Postgres during a DAG wave. 7 x (5+5) = 70
+    # worst-case server connections (typical ~35), comfortably under the
+    # cluster's max_connections=200. The analytics WRITERS are funnelled
+    # through the PgBouncer pooler separately; the Airflow metadata DB stays on
+    # a direct postgresql-rw connection (from the airflow-postgresql Secret),
+    # which transaction pooling would break.
+    # pre_ping validates a connection before use (kills stale conns after a
+    # brief DB blip / standby failover); recycle 1800s < the Vault dynamic-cred
+    # 1h TTL so a connection is never used past credential rotation.
+    sql_alchemy_pool_size = 5
+    sql_alchemy_max_overflow = 5
+    sql_alchemy_pool_pre_ping = True
+    sql_alchemy_pool_recycle = 1800
+
     [scheduler]
     catchup_by_default = False
     dag_dir_list_interval = 30
