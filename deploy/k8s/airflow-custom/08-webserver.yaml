@@ -102,8 +102,8 @@ spec:
           httpGet:
             path: /api/v2/monitor/health
             port: 8080
-          initialDelaySeconds: 0
-          periodSeconds: 10
+          initialDelaySeconds: 90
+          periodSeconds: 15
           timeoutSeconds: 5
           failureThreshold: 3
         # limit > request so a health-query spike can burst CPU instead of
