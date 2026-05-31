@@ -151,11 +151,6 @@ pipeline {
           steps { checkout scm; deployK8s(appName: 'poorbricks-api', kubernetesDirectory: 'deploy/k8s/api', canary: false, generateK8sConfig: false) }
           post { failure { container('gke') { notifySlack(event: 'fail') } } }
         }
-        stage('deploy-streamlit') {
-          agent { kubernetes { yaml podTemplates.gke() } }
-          steps { checkout scm; deployK8s(appName: 'poorbricks-streamlit', kubernetesDirectory: 'deploy/k8s/streamlit', canary: false, generateK8sConfig: false) }
-          post { failure { container('gke') { notifySlack(event: 'fail') } } }
-        }
         stage('deploy-ui') {
           agent { kubernetes { yaml podTemplates.gke() } }
           steps { checkout scm; deployK8s(appName: 'poorbricks-ui', kubernetesDirectory: 'deploy/k8s/ui', canary: false, generateK8sConfig: false) }

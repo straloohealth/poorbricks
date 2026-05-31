@@ -1,0 +1,20 @@
+name: poorbricks
+description: >
+  Local-first Spark pipeline framework using a medallion architecture
+  (Bronze/Silver/Gold). Pipelines read from MongoDB, write to PostgreSQL.
+  Includes an Airflow runtime, a FastAPI contract server, and a Next.js
+  observability UI. Used by almost every repo for data/analytics tables.
+repo_url: https://github.com/straloohealth/poorbricks
+owners:
+  - platform
+  - data
+tags:
+  - language:python
+  - kind:data-pipeline
+  - kind:warehouse
+  - tech:spark
+  - tech:mongodb
+  - tech:postgresql
+  - tech:airflow
+  - tech:fastapi
+  - tech:nextjs
