@@ -11,12 +11,15 @@ Server-side only (mirrors ``utils.contracts`` — the server owns Mongo access).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 import pymongo
+
+log = logging.getLogger(__name__)
 
 _COLLECTION = "code_comments"
 _index_ready = False
@@ -53,12 +56,21 @@ def _coll() -> pymongo.collection.Collection[dict[str, Any]]:
 
 
 def _ensure_index(coll: pymongo.collection.Collection[dict[str, Any]]) -> None:
-    """Create the read index once per process (idempotent)."""
+    """Best-effort: create the read index once per process.
+
+    The server's Mongo role can read/write documents but may lack the
+    ``createIndex`` (DDL) privilege — that returns ``OperationFailure`` code 13.
+    The index is only a query optimization, so a failure must NOT break listing
+    or adding comments. Attempt at most once per process and never raise.
+    """
     global _index_ready
     if _index_ready:
         return
-    coll.create_index([("table_name", 1), ("file", 1), ("line_start", 1)])
     _index_ready = True
+    try:
+        coll.create_index([("table_name", 1), ("file", 1), ("line_start", 1)])
+    except pymongo.errors.PyMongoError as exc:
+        log.warning("code_comments: skipping index creation (%s)", exc)
 
 
 def _from_doc(doc: dict[str, Any]) -> CodeComment:
