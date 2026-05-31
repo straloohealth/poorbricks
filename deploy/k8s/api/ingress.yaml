@@ -12,11 +12,18 @@ spec:
   # operator keeps the default device name `airflow-poorbricks-server-ingress`,
   # which is what `poorbricks/settings.py` (contracts_api_url) and
   # `poorbricks/verify.py` hardcode. Renaming it would break those defaults.
-  defaultBackend:
-    service:
-      name: poorbricks-server
-      port:
-        number: 8080
+  # Keep the `rules`/path form (mirrors the working UI ingress); the load-bearing
+  # fix is the `tls.hosts` block below.
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: poorbricks-server
+                port:
+                  number: 8080
   tls:
     - hosts:
         - airflow-poorbricks-server-ingress
