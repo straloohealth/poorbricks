@@ -457,9 +457,26 @@ def test_source_comment_crud(client: TestClient) -> None:
     base = f"/v1/source/{table}/comments"
 
     # Validation: unknown file, inverted range, and empty body are all 400.
-    assert client.post(base, json={"file": "x.py", "line_start": 1, "line_end": 1, "body": "hi"}).status_code == 400
-    assert client.post(base, json={"file": "transform.py", "line_start": 5, "line_end": 2, "body": "hi"}).status_code == 400
-    assert client.post(base, json={"file": "transform.py", "line_start": 1, "line_end": 1, "body": "  "}).status_code == 400
+    assert (
+        client.post(
+            base, json={"file": "x.py", "line_start": 1, "line_end": 1, "body": "hi"}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            base,
+            json={"file": "transform.py", "line_start": 5, "line_end": 2, "body": "hi"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            base,
+            json={"file": "transform.py", "line_start": 1, "line_end": 1, "body": "  "},
+        ).status_code
+        == 400
+    )
 
     try:
         created = client.post(

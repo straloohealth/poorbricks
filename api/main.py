@@ -389,16 +389,18 @@ def _latest_sha_for_table(table_name: str) -> str | None:
         if not pipeline_key:
             return None
         store = RunHistoryStore()
-        rec = store.last_successful(pipeline_key, environment="prod") or store.last_successful(
-            pipeline_key
-        )
+        rec = store.last_successful(
+            pipeline_key, environment="prod"
+        ) or store.last_successful(pipeline_key)
         return rec.sha if rec else None
     except Exception:  # noqa: BLE001
         return None
 
 
 @app.get("/v1/source/{table_name}/comments")
-def list_comments_endpoint(table_name: str, file: str | None = None) -> list[dict[str, Any]]:
+def list_comments_endpoint(
+    table_name: str, file: str | None = None
+) -> list[dict[str, Any]]:
     """All PR-style line comments for a table's source (optionally one file)."""
     from poorbricks.code_comments import list_comments
 

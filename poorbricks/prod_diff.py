@@ -180,7 +180,9 @@ def compute_prod_diff(
     prod_rates: dict[str, float] = dict((prod_profile or {}).get("null_rates") or {})
 
     row_count = _row_count_diff(
-        dev_snapshot.get("row_count"), (prod_profile or {}).get("row_count"), pct_threshold
+        dev_snapshot.get("row_count"),
+        (prod_profile or {}).get("row_count"),
+        pct_threshold,
     )
     null_dist = _null_dist_diff(dev_rates, prod_rates)
     fields = _fields_diff(dev_snapshot.get("fields") or [], prod_fields or [])
