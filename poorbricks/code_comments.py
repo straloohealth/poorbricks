@@ -91,7 +91,7 @@ def list_comments(table_name: str, file: str | None = None) -> list[CodeComment]
     """All comments for a table (optionally one file), in gutter order."""
     coll = _coll()
     _ensure_index(coll)
-    query: dict[str, Any] = {"table_name": table_name}
+    query: dict[str, Any] = {"table_name": table_name, "deleted": {"$ne": True}}
     if file is not None:
         query["file"] = file
     cursor = coll.find(query).sort([("file", 1), ("line_start", 1), ("created_at", 1)])
@@ -109,12 +109,20 @@ def add_comment(comment: CodeComment) -> CodeComment:
 
 
 def delete_comment(comment_id: str, table_name: str | None = None) -> bool:
-    """Delete one comment by id; returns True if a document was removed."""
+    """Soft-delete one comment by id; returns True if a visible comment matched.
+
+    The server's scoped Mongo role is ``readWriteNoDelete`` — it has no
+    destructive REMOVE (org policy keeps deletes out of ephemeral creds) — so
+    deletion is an UPDATE that marks the doc ``deleted`` and hides it from
+    ``list_comments``. The row stays in Mongo (recoverable), which still
+    satisfies the "manually removed" requirement from the user's perspective.
+    """
     coll = _coll()
-    query: dict[str, Any] = {"_id": comment_id}
+    query: dict[str, Any] = {"_id": comment_id, "deleted": {"$ne": True}}
     if table_name is not None:
         query["table_name"] = table_name
-    return coll.delete_one(query).deleted_count > 0
+    update = {"$set": {"deleted": True, "deleted_at": _now_iso()}}
+    return coll.update_one(query, update).modified_count > 0
 
 
 __all__ = ["CodeComment", "list_comments", "add_comment", "delete_comment"]

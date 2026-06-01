@@ -69,10 +69,16 @@ spec:
                 secretKeyRef:
                   name: poorbricks-server-mongodb-creds
                   key: MONGO_URI
+            # Contracts DB uses the SCOPED read-write creds (Vault role
+            # readWriteNoDelete on the `poorbricks` DB) so the server can upsert
+            # data_contracts + write the code_comments collection
+            # (insert/update/createIndex; deletes are soft). Distinct from the
+            # cluster-wide read-only MONGO_URI above (workers read bronze
+            # sources). See infra-security grants/namespaces/airflow.yaml.
             - name: CONTRACTS_MONGO_URI
               valueFrom:
                 secretKeyRef:
-                  name: poorbricks-server-mongodb-creds
+                  name: poorbricks-server-contracts-mongodb-creds
                   key: MONGO_URI
             - name: CONTRACTS_DB
               value: poorbricks
